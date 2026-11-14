@@ -1,0 +1,12 @@
+/build/
+/cmake-build-*/
+/.vscode/
+/.idea/
+*.bin
+*.elf
+*.map
+sdkconfig
+sdkconfig.old
+managed_components/
+.DS_Store
+Thumbs.db
