@@ -1,4 +1,4 @@
-name: Cardputer ADV firmware build
+name: MCAI-OS Cardputer ADV firmware build
 
 on:
   push:
@@ -31,7 +31,7 @@ jobs:
       - name: Upload firmware build
         uses: actions/upload-artifact@v4
         with:
-          name: cmair-os-cardputer-adv
+          name: mcai-os-cardputer-adv
           path: firmware/cardputer-adv/build/cmair-os-cardputer-adv.bin
           if-no-files-found: error
       - name: Publish development firmware release
@@ -40,7 +40,7 @@ jobs:
         with:
           tag_name: v0.1.0-alpha
           target_commitish: main
-          name: CMAIR-OS v0.1.0-alpha (development firmware)
+          name: MCAI-OS v0.1.0-alpha (development firmware)
           prerelease: true
           files: firmware/cardputer-adv/build/cmair-os-cardputer-adv.bin
           generate_release_notes: true
