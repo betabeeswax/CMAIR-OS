@@ -40,9 +40,9 @@ To publish the website, open **Settings → Pages**, choose **Deploy from a bran
 
 `https://betabeeswax.github.io/CMAIR-OS/`
 
-Use current Chrome or Edge on a computer with a USB data cable. The installer checks GitHub Releases and only enables the flash button when a release contains `cmair-os-cardputer-adv.bin`. The firmware workflow builds a merged ESP32-S3 image on pushes and uploads it as a workflow artifact; pushing a version tag such as `v0.1.0` publishes the binary as a GitHub Release asset.
+Use current Chrome or Edge on a computer with a USB data cable. The installer checks GitHub Releases and only enables the flash button when a release contains `cmair-os-cardputer-adv.bin`. The firmware workflow builds a merged ESP32-S3 image on pushes to `main`, uploads the build artifact, and publishes/updates the `v0.1.0-alpha` prerelease with the firmware binary. Version tags beginning with `v` publish versioned releases.
 
-**Current limitation:** the firmware is still a development heartbeat foundation, not a finished operating system. Do not flash it expecting the desktop, apps, or hardware drivers to work yet. The website remains in “firmware not published” mode until a tagged firmware release exists. The microSD card is separate from internal flash and is not formatted by the installer.
+**Current limitation:** the firmware is still a development heartbeat foundation, not a finished operating system. Do not flash it expecting the desktop, apps, or hardware drivers to work yet. The website checks GitHub Releases (including prereleases) and enables flashing only when the firmware binary is present. The microSD card is separate from internal flash and is not formatted by the installer.
 
 ## Build
 
