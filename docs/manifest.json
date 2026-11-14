@@ -7,7 +7,7 @@
       "chipFamily": "ESP32-S3",
       "parts": [
         {
-          "path": "https://github.com/betabeeswax/CMAIR-OS/releases/latest/download/cmair-os-cardputer-adv.bin",
+          "path": "https://github.com/betabeeswax/CMAIR-OS/releases/download/v0.1.0-alpha/cmair-os-cardputer-adv.bin",
           "offset": 0
         }
       ]
