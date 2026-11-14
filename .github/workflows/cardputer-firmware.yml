@@ -34,7 +34,17 @@ jobs:
           name: cmair-os-cardputer-adv
           path: firmware/cardputer-adv/build/cmair-os-cardputer-adv.bin
           if-no-files-found: error
-      - name: Publish firmware release
+      - name: Publish development firmware release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0-alpha
+          target_commitish: main
+          name: CMAIR-OS v0.1.0-alpha (development firmware)
+          prerelease: true
+          files: firmware/cardputer-adv/build/cmair-os-cardputer-adv.bin
+          generate_release_notes: true
+      - name: Publish versioned firmware release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
