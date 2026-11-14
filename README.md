@@ -28,6 +28,18 @@ The catalogue is a roadmap. Entries are not represented as implemented until the
 - `benchmarks` — repeatable performance test plan and result format.
 - `docs` — architecture, storage, security and hardware notes.
 
+## Browser flasher
+
+A browser-based installer for the M5Stack Cardputer ADV is in [`docs/index.html`](docs/index.html), with its ESP Web Tools manifest in [`docs/manifest.json`](docs/manifest.json).
+
+To publish the website, open **Settings → Pages**, choose **Deploy from a branch**, select branch **main** and folder **/docs**, then save. The site will be available at:
+
+`https://betabeeswax.github.io/CMAIR-OS/`
+
+Use current Chrome or Edge on a computer with a USB data cable. The installer checks GitHub Releases and only enables the flash button when a release contains `cmair-os-cardputer-adv.bin`. The firmware workflow builds a merged ESP32-S3 image on pushes and uploads it as a workflow artifact; pushing a version tag such as `v0.1.0` publishes the binary as a GitHub Release asset.
+
+**Current limitation:** the firmware is still a development heartbeat foundation, not a finished operating system. Do not flash it expecting the desktop, apps, or hardware drivers to work yet. The website remains in “firmware not published” mode until a tagged firmware release exists. The microSD card is separate from internal flash and is not formatted by the installer.
+
 ## Build
 
 ### Portable core and desktop host
