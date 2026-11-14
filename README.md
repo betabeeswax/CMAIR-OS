@@ -1,5 +1,7 @@
 # CMAIR-OS
 
+[🌐 Open the CMAIR-OS Easy Flasher](https://betabeeswax.github.io/CMAIR-OS/) · [📦 View the repository](https://github.com/betabeeswax/CMAIR-OS) · [⬇️ Firmware releases](https://github.com/betabeeswax/CMAIR-OS/releases)
+
 **Cardputer MStack But AI** — a real, native operating-system project for the M5Stack Cardputer ADV, with a companion desktop edition.
 
 CMAIR-OS is being developed as a small, modular system rather than a web page pretending to be an OS. The Cardputer build must respect its 240 × 135 display, limited internal flash/RAM, keyboard, battery, wireless hardware and microSD storage. Desktop builds can provide richer versions of the same apps.
@@ -29,6 +31,8 @@ The catalogue is a roadmap. Entries are not represented as implemented until the
 - `docs` — architecture, storage, security and hardware notes.
 
 ## Browser flasher
+
+**Quick link:** [Open the CMAIR-OS installer website](https://betabeeswax.github.io/CMAIR-OS/). You can always find this link at the top of this README. The installer also has a **Go to CMAIR-OS repository** button so you can return here.
 
 A browser-based installer for the M5Stack Cardputer ADV is in [`docs/index.html`](docs/index.html), with its ESP Web Tools manifest in [`docs/manifest.json`](docs/manifest.json).
 
