@@ -1,10 +1,10 @@
-# CMAIR-OS
+# MCAI-OS
 
-[🌐 Open the CMAIR-OS Easy Flasher](https://betabeeswax.github.io/CMAIR-OS/) · [📦 View the repository](https://github.com/betabeeswax/CMAIR-OS) · [⬇️ Firmware releases](https://github.com/betabeeswax/CMAIR-OS/releases)
+[🌐 Open the MCAI-OS Easy Flasher](https://betabeeswax.github.io/MCAI-OS/) · [📦 View the repository](https://github.com/betabeeswax/MCAI-OS) · [⬇️ Firmware releases](https://github.com/betabeeswax/MCAI-OS/releases)
 
-**Cardputer MStack But AI** — a real, native operating-system project for the M5Stack Cardputer ADV, with a companion desktop edition.
+**MCAI-OS means “M5Stack Cardputer but AI OS”** — a real, native operating-system project for the M5Stack Cardputer ADV, with a companion desktop edition.
 
-CMAIR-OS is being developed as a small, modular system rather than a web page pretending to be an OS. The Cardputer build must respect its 240 × 135 display, limited internal flash/RAM, keyboard, battery, wireless hardware and microSD storage. Desktop builds can provide richer versions of the same apps.
+MCAI-OS is being developed as a small, modular system rather than a web page pretending to be an OS. The Cardputer build must respect its 240 × 135 display, limited internal flash/RAM, keyboard, battery, wireless hardware and microSD storage. Desktop builds can provide richer versions of the same apps.
 
 > **Project status:** early foundation. This repository is the starting point, not a claim that all 106 apps or hardware drivers are already complete.
 
@@ -32,13 +32,13 @@ The catalogue is a roadmap. Entries are not represented as implemented until the
 
 ## Browser flasher
 
-**Quick link:** [Open the CMAIR-OS installer website](https://betabeeswax.github.io/CMAIR-OS/). You can always find this link at the top of this README. The installer also has a **Go to CMAIR-OS repository** button so you can return here.
+**Quick link:** [Open the MCAI-OS installer website](https://betabeeswax.github.io/MCAI-OS/). You can always find this link at the top of this README. The installer also has a **Go to MCAI-OS repository** button so you can return here.
 
 A browser-based installer for the M5Stack Cardputer ADV is in [`docs/index.html`](docs/index.html), with its ESP Web Tools manifest in [`docs/manifest.json`](docs/manifest.json).
 
 To publish the website, open **Settings → Pages**, choose **Deploy from a branch**, select branch **main** and folder **/docs**, then save. The site will be available at:
 
-`https://betabeeswax.github.io/CMAIR-OS/`
+`https://betabeeswax.github.io/MCAI-OS/`
 
 Use current Chrome or Edge on a computer with a USB data cable. The installer checks GitHub Releases and only enables the flash button when a release contains `cmair-os-cardputer-adv.bin`. The firmware workflow builds a merged ESP32-S3 image on pushes to `main`, uploads the build artifact, and publishes/updates the `v0.1.0-alpha` prerelease with the firmware binary. Version tags beginning with `v` publish versioned releases.
 
@@ -56,7 +56,7 @@ cmake --build build --config Release
 ./build/desktop/cmair-desktop
 ```
 
-On Windows, run `build\desktop\Release\cmair-desktop.exe` when using a multi-configuration generator.
+On Windows, run `build\\desktop\\Release\\cmair-desktop.exe` when using a multi-configuration generator.
 
 ### Cardputer ADV firmware
 
