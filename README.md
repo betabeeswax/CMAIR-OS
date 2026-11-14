@@ -2,7 +2,7 @@
 
 [🌐 Open the MCAI-OS Easy Flasher](https://betabeeswax.github.io/MCAI-OS/) · [📦 View the repository](https://github.com/betabeeswax/MCAI-OS) · [⬇️ Firmware releases](https://github.com/betabeeswax/MCAI-OS/releases)
 
-**MCAI-OS means “M5Stack Cardputer but AI OS”** — a real, native operating-system project for the M5Stack Cardputer ADV, with a companion desktop edition.
+**MCAI-OS stands for “M5Stack Cardputer but AI”** — a real, native operating-system project for the M5Stack Cardputer ADV, with a companion desktop edition.
 
 MCAI-OS is being developed as a small, modular system rather than a web page pretending to be an OS. The Cardputer build must respect its 240 × 135 display, limited internal flash/RAM, keyboard, battery, wireless hardware and microSD storage. Desktop builds can provide richer versions of the same apps.
 
