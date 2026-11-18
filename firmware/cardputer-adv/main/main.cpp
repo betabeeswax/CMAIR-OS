@@ -448,6 +448,7 @@ bool package_path(char* out,size_t cap,const char* id) {
 }
 int store_builtin_index(const char* id) {
     if(std::strcmp(id,"file-manager")==0)return 0;
+    if(std::strcmp(id,"notes")==0)return 1;
     if(std::strcmp(id,"calculator")==0)return 2;
     if(std::strcmp(id,"settings")==0)return 3;
     if(std::strcmp(id,"system-information")==0)return 4;
@@ -862,6 +863,7 @@ void poll_keyboard() {
                     if(builtin>=0){
                         active_app=builtin;
                         if(builtin==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}
+                        if(builtin==1){note_editing=false;refresh_notes();}
                         if(builtin==5)refresh_store();
                         if(builtin==6&&connect_wifi_from_sd())start_time_sync();
                     } else if(package_installed(store_ids[store_selected])) {
