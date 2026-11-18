@@ -10,6 +10,7 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_http_client.h"
+#include "esp_crt_bundle.h"
 #include "nvs_flash.h"
 #include "cJSON.h"
 #include "esp_lcd_panel_io.h"
@@ -217,6 +218,7 @@ esp_err_t catalogue_http_event(esp_http_client_event_t* evt) {
 }
 bool connect_wifi_from_sd() {
     if(wifi_started) return true;
+    mkdir("/sdcard/MCAI-OS",0775);
     FILE* f=std::fopen("/sdcard/MCAI-OS/wifi.cfg","r");
     if(!f){std::snprintf(store_message,sizeof(store_message),"ADD WIFI.CFG ON SD");return false;}
     char ssid[33]={},password[65]={};
@@ -247,7 +249,7 @@ void refresh_store() {
     if(!connect_wifi_from_sd())return;
     esp_http_client_config_t cfg={};
     cfg.url="https://raw.githubusercontent.com/betabeeswax/MCAI-OS-APPS/main/catalogue.json";
-    cfg.event_handler=catalogue_http_event;cfg.timeout_ms=15000;cfg.buffer_size=2048;
+    cfg.event_handler=catalogue_http_event;cfg.timeout_ms=15000;cfg.buffer_size=2048;cfg.crt_bundle_attach=esp_crt_bundle_attach;
     esp_http_client_handle_t client=esp_http_client_init(&cfg);
     if(!client){std::snprintf(store_message,sizeof(store_message),"HTTP INIT FAILED");return;}
     esp_err_t result=esp_http_client_perform(client);
@@ -313,7 +315,7 @@ void render_app() {
     case 5:
         draw_text("GITHUB APP STORE",8,25,1,accent);
         draw_text(catalogue_loaded?"MCAI-OS-APPS / MAIN":"GITHUB CATALOGUE",8,39,1,ink);
-        for(int i=0;i<4;i++){int ix=store_scroll+i;if(ix>=store_count)break;char row[40];std::snprintf(row,sizeof(row),"%c %.20s %s",ix==store_selected?'>':' ',store_names[ix],std::strcmp(store_status[ix],"available")==0?"READY":"PLANNED");draw_text(row,8,54+i*13,1,ix==store_selected?accent:ink);}
+        for(int i=0;i<4;i++){int ix=store_scroll+i;if(ix>=store_count)break;char row[40];std::snprintf(row,sizeof(row),"%c %.20s %s",ix==store_selected?'>':' ',store_names[ix],std::strcmp(store_status[ix],"available")==0?"AVAILABLE":"PLANNED");draw_text(row,8,54+i*13,1,ix==store_selected?accent:ink);}
         draw_text(store_message,8,110,1,muted);draw_text("UP/DOWN ENTER INFO",8,122,1,muted);break;
     case 6: {
         std::time_t now=std::time(nullptr);std::tm tmv{};localtime_r(&now,&tmv);
@@ -539,7 +541,7 @@ extern "C" void app_main(void) {
             for(int i=1;i<snake_len;i++)if(snake_x[0]==snake_x[i]&&snake_y[0]==snake_y[i])game_over=true;
             if(snake_x[0]==food_x&&snake_y[0]==food_y){if(snake_len<47)++snake_len;++game_score;food_x=(food_x+7)%23;food_y=(food_y+3)%9;}
         }
-        if(old_app!=active_app||old_sel!=selected_app||active_app==6||active_app==7||active_app==11||active_app==0||active_app==8)render_home();
+        if(old_app!=active_app||old_sel!=selected_app||active_app==6||active_app==7||active_app==11||active_app==0||active_app==5||active_app==8)render_home();
         if(active_app==1&&note_length>0&&note_length%24==0)save_note();
         vTaskDelay(pdMS_TO_TICKS(60));
     }
