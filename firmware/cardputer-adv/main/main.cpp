@@ -175,6 +175,38 @@ void draw_text(const char* text, int x, int y, int scale, std::uint16_t color) {
     }
 }
 
+void fill_round_rect(int x,int y,int w,int h,int radius,std::uint16_t color) {
+    const int r=std::max(0,std::min(radius,std::min(w,h)/2));
+    for(int py=0;py<h;py++) for(int px=0;px<w;px++) {
+        int cx=px<r?r-1:(px>=w-r?w-r:px);
+        int cy=py<r?r-1:(py>=h-r?h-r:py);
+        int dx=px-cx,dy=py-cy;
+        if((px>=r&&px<w-r)||(py>=r&&py<h-r)||dx*dx+dy*dy<=r*r)
+            fill_rect(x+px,y+py,1,1,color);
+    }
+}
+void draw_mcaI_logo_splash() {
+    const auto green=rgb565(126,217,87), black=rgb565(0,0,0);
+    const auto white=rgb565(254,254,254), grey=rgb565(115,115,115);
+    const auto frame=rgb565(191,190,191), navy=rgb565(18,0,120);
+    std::fill(std::begin(framebuffer),std::end(framebuffer),green);
+    const char keys[]="MCAI";
+    for(int i=0;i<4;i++) {
+        const int x=5+i*58;
+        fill_round_rect(x+2,7,55,43,8,black);
+        fill_round_rect(x,4,55,43,8,black);
+        fill_round_rect(x+2,6,51,38,7,white);
+        draw_text((char[2]){keys[i],0},x+14,14,4,black);
+    }
+    fill_rect(0,54,240,81,black);
+    fill_rect(2,56,236,77,frame);
+    fill_rect(4,58,232,69,grey);
+    fill_rect(4,58,232,14,navy);
+    fill_rect(4,73,232,54,grey);
+    draw_text("OS",65,75,9,black);
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
+}
+
 void apply_brightness() {
     // Cardputer ADV shares GPIO38 with the display power rail. Its backlight
     // only behaves correctly with the board's 256 Hz / 9-bit / channel 7 PWM.
@@ -654,19 +686,32 @@ void render_app() {
 }
 
 void render_home() {
-    const auto bg=rgb565(11,16,29), card=rgb565(22,31,49), accent=rgb565(87,231,190);
+    const auto bg=rgb565(11,16,29), card=rgb565(22,31,49), accent=rgb565(126,217,87);
     const auto white=rgb565(244,248,255), muted=rgb565(150,166,190), selected=rgb565(37,68,75);
     if(active_app>=0) { render_app(); return; }
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
-    fill_rect(0,0,kWidth,3,accent); draw_text("MCAI",8,7,2,accent); draw_text("OS",57,14,1,white);
-    draw_text(sd_ready?"SD READY":"NO SD",158,12,1,sd_ready?accent:muted);
-    draw_text("APP LAUNCHER",8,29,1,muted);
+    // Compact version of the new green MCAI keycap + retro OS-window logo.
+    fill_rect(0,0,kWidth,47,rgb565(126,217,87));
+    const char keys[]="MCAI";
+    for(int i=0;i<4;i++) {
+        int x=5+i*58;
+        fill_round_rect(x+2,5,55,27,6,rgb565(0,0,0));
+        fill_round_rect(x,3,53,26,6,rgb565(0,0,0));
+        fill_round_rect(x+2,5,49,22,5,rgb565(254,254,254));
+        char letter[2]={keys[i],0};
+        draw_text(letter,x+17,10,2,rgb565(0,0,0));
+    }
+    fill_rect(4,34,232,12,rgb565(0,0,0));
+    fill_rect(6,36,228,8,rgb565(18,0,120));
+    draw_text("OS",111,37,1,white);
+    draw_text(sd_ready?"SD READY":"NO SD",8,50,1,sd_ready?accent:muted);
+    draw_text("APP LAUNCHER",8,61,1,muted);
     const int page=selected_app/kAppsPerPage, pages=(kAppCount+kAppsPerPage-1)/kAppsPerPage;
-    for(int row=0;row<kAppsPerPage;row++) { const int i=page*kAppsPerPage+row; if(i>=kAppCount) break;
-        const int y=43+row*15; fill_rect(7,y,226,13,i==selected_app?selected:card);
-        if(i==selected_app) { fill_rect(7,y,3,13,accent); } draw_text(kApps[i],15,y+3,1,i==selected_app?accent:white); }
-    char p[20]; std::snprintf(p,sizeof(p),"PAGE %d/%d",page+1,pages); draw_text(p,8,122,1,accent);
-    draw_text("UP/DOWN MOVE ENTER OPEN",85,122,1,muted);
+    for(int row=0;row<4;row++) { const int i=page*kAppsPerPage+row; if(i>=kAppCount) break;
+        const int y=73+row*12; fill_rect(7,y,226,11,i==selected_app?selected:card);
+        if(i==selected_app) { fill_rect(7,y,3,11,accent); } draw_text(kApps[i],15,y+2,1,i==selected_app?accent:white); }
+    char p[20]; std::snprintf(p,sizeof(p),"PAGE %d/%d",page+1,pages); draw_text(p,8,124,1,accent);
+    draw_text("UP/DOWN ENTER",150,124,1,muted);
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
 }
 
