@@ -268,10 +268,11 @@ bool eval_expr(const char*& p,double& out) {
 }
 void calculate() {
     const char* p=calc_buffer; double result=0;
-    if(!eval_expr(p,result)){std::snprintf(calc_buffer,sizeof(calc_buffer),"INVALID / DIV0");return;}
+    if(!eval_expr(p,result)){std::snprintf(calc_buffer,sizeof(calc_buffer),"INVALID / DIV0");calc_length=(int)std::strlen(calc_buffer);return;}
     while(*p==' ')++p;
-    if(*p){std::snprintf(calc_buffer,sizeof(calc_buffer),"INVALID INPUT");return;}
+    if(*p){std::snprintf(calc_buffer,sizeof(calc_buffer),"INVALID INPUT");calc_length=(int)std::strlen(calc_buffer);return;}
     std::snprintf(calc_buffer,sizeof(calc_buffer),"%.8g",result);
+    calc_length=(int)std::strlen(calc_buffer);
 }
 void refresh_files() {
     file_count=0; file_selected=0;
