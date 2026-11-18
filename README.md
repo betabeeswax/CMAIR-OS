@@ -16,7 +16,7 @@ MCAI-OS is being developed as a small, modular system rather than a web page pre
 
 ## App catalogue
 
-The complete 106-entry list is in [`apps/catalogue.json`](apps/catalogue.json). The separate [MCAI-OS Apps repository](https://github.com/betabeeswax/MCAI-OS-APPS) is the home for app packages, manifests, developer format documentation and the app catalogue mirror. Names are kept as specified. In particular, the media player is named **MLC**; app names are not automatically prefixed with “AIR”.
+The complete 108-entry list is in [`apps/catalogue.json`](apps/catalogue.json). The separate [MCAI-OS Apps repository](https://github.com/betabeeswax/MCAI-OS-APPS) is the home for app packages, manifests, developer format documentation and the app catalogue mirror. Names are kept as specified. In particular, the media player is named **MLC**; app names are not automatically prefixed with “AIR”.
 
 The catalogue is a roadmap. Entries are not represented as implemented until their code and tests exist.
 
@@ -42,7 +42,7 @@ To publish the website, open **Settings → Pages**, choose **Deploy from a bran
 
 Use current Chrome or Edge on a computer with a USB data cable. The installer checks GitHub Releases and only enables the flash button when a release contains `cmair-os-cardputer-adv.bin`. The firmware workflow builds a merged ESP32-S3 image on pushes to `main`, uploads the build artifact, and publishes/updates the `v0.1.0-alpha` prerelease with the firmware binary. Version tags beginning with `v` publish versioned releases.
 
-**Current development status:** the Cardputer ADV firmware now initializes the ST7789 display, attempts to initialize the TCA8418 keyboard over I²C, attempts to mount the microSD card, and draws an early keyboard-navigable home launcher. The launcher currently lists File Manager, Notes, Calculator, Settings and System Info, but those app screens and services are not implemented yet. Keyboard navigation and microSD mounting still need confirmation on the physical Cardputer ADV; a successful CI build is not a hardware test. Audio, Wi-Fi, Bluetooth, battery reporting, app execution, updates from microSD and the full desktop shell remain future work. The installer checks GitHub Releases (including prereleases); the microSD card is separate from internal flash and is not formatted by the installer.
+**Current development status:** the Cardputer ADV firmware includes a launcher and built-in screens for File Manager, separate editable Notes, Calculator, Settings, System Info, App Store, Clock, Timer, Keyboard Test, Storage, Diagnostics, Snake and About. The keyboard driver now follows M5Stack's TCA8418 7×8 matrix setup and supports the ADV arrow keys, Caps Lock and Fn symbol layer. Settings includes on-device Wi-Fi credential entry, network time sync, BLE device scanning, display options and sound controls. The ES8311/I2S audio path provides startup, keypress and timer tones. The App Store reads the 108-entry MCAI-OS-APPS catalogue, opens built-in apps, and can install verified declarative packages such as the experimental Tap Counter. BLE scanning discovers nearby devices; Bluetooth pairing and connected-device profiles are not implemented yet. Many catalogue entries remain planned, and the desktop shell is still a core-validation host rather than a finished desktop OS. **CI builds do not prove physical hardware operation**: display, keyboard, Wi-Fi, BLE, speaker, microSD and every app still require testing on the actual Cardputer ADV. The installer checks GitHub Releases (including prereleases); the microSD card is separate from internal flash and is not formatted by the installer.
 
 ## Build
 
@@ -93,19 +93,8 @@ The firmware App Store reads the live catalogue from
 over HTTPS. It does not install roadmap entries or pretend that planned apps
 are downloadable.
 
-### Wi-Fi setup for the App Store
+### Wi-Fi setup
 
-1. Put the microSD card in your computer.
-2. Create the folder `MCAI-OS` on the card if it does not exist.
-3. Inside it, create a plain-text file named `wifi.cfg`.
-4. Put the Wi-Fi network name on line 1 and its password on line 2.
-5. Safely eject the card, insert it into the Cardputer ADV, and open App Store.
-
-Example file (replace these example values; do not publish your real password):
-
-```text
-Your Wi-Fi name
-Your Wi-Fi password
-```
+Open **Settings → Wi-Fi Setup** on the Cardputer ADV. Type the network name, press Enter, type the password, and press Enter again to save and connect. Credentials are stored in `/sdcard/MCAI-OS/wifi.cfg` on the microSD card. Keep the card private because this file contains your Wi-Fi password.
 
 The App Store downloads the repository catalogue and supports verified `mcai-app-v1` JSON packages. It checks the package's HTTPS response, exact size, SHA-256 digest, app ID and Cardputer target before saving it under `/sdcard/MCAI-OS/apps/`. The first package, Tap Counter, is marked `experimental` until it is tested on physical Cardputer ADV hardware. The initial runtime is deliberately limited to declarative counter apps; it does not execute downloaded native code. Entries marked `planned` cannot be installed.
