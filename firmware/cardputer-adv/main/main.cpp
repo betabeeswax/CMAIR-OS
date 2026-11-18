@@ -1,5 +1,6 @@
 #include "driver/gpio.h"
 #include "driver/ledc.h"
+#include "driver/i2s.h"
 #include "driver/i2c.h"
 #include "driver/spi_master.h"
 #include "driver/sdspi_host.h"
@@ -74,6 +75,7 @@ int selected_app = 0;
 int active_app = -1;
 int setting_brightness = 1;
 int settings_selection=0;
+bool sound_enabled=true, audio_ready=false;
 int wifi_setup_step=0;
 char wifi_ssid_input[33]={};
 char wifi_password_input[65]={};
@@ -210,7 +212,7 @@ void save_settings() {
 void load_settings() {
     if(!sd_ready) return;
     FILE* f=std::fopen("/sdcard/MCAI-OS/settings.cfg","r");
-    if(f){int b=1,t=1;if(std::fscanf(f,"%d %d",&b,&t)>=1){setting_brightness=std::max(0,std::min(2,b));dark_theme=t!=0;}std::fclose(f);}
+    if(f){int b=1,t=1,snd=1;int n=std::fscanf(f,"%d %d %d",&b,&t,&snd);if(n>=1){setting_brightness=std::max(0,std::min(2,b));if(n>=2)dark_theme=t!=0;if(n>=3)sound_enabled=snd!=0;}std::fclose(f);}
 }
 void refresh_notes() {
     note_count=0; note_selected=0;
@@ -590,11 +592,12 @@ void render_app() {
             draw_text("ESC: CANCEL  BKSP: DELETE",8,116,1,muted);
         } else {
             draw_text("SETTINGS",8,25,1,accent);
-            const char* rows[]={"BRIGHTNESS","THEME","WI-FI SETUP","BLUETOOTH"};
-            for(int i=0;i<4;i++){
+            const char* rows[]={"BRIGHTNESS","THEME","WI-FI SETUP","BLUETOOTH","SOUNDS"};
+            for(int i=0;i<5;i++){
                 char item[40];
                 if(i==0)std::snprintf(item,sizeof(item),"BRIGHTNESS: %s",setting_brightness==0?"LOW":setting_brightness==1?"MED":"HIGH");
                 else if(i==1)std::snprintf(item,sizeof(item),"THEME: %s",dark_theme?"DARK":"LIGHT");
+                else if(i==4)std::snprintf(item,sizeof(item),"SOUNDS: %s",sound_enabled?"ON":"OFF");
                 else std::snprintf(item,sizeof(item),"%s",rows[i]);
                 draw_text(item,12,43+i*15,1,i==settings_selection?accent:ink);
             }
@@ -740,6 +743,57 @@ void init_keyboard() {
     ESP_LOGI(kTag,"TCA8418 7x8 matrix initialized");
 }
 
+bool es8311_write(std::uint8_t reg,std::uint8_t value) {
+    const std::uint8_t packet[2]={reg,value};
+    return i2c_master_write_to_device(I2C_NUM_0,0x18,packet,sizeof(packet),pdMS_TO_TICKS(100))==ESP_OK;
+}
+bool init_audio() {
+    const std::uint8_t seq[][2]={{0x00,0x80},{0x01,0xB5},{0x02,0x18},{0x0D,0x01},
+                                 {0x12,0x00},{0x13,0x10},{0x32,0xBF},{0x37,0x08}};
+    for(const auto& reg:seq) {
+        if(!es8311_write(reg[0],reg[1])){ESP_LOGW(kTag,"ES8311 init failed at 0x%02X",reg[0]);return false;}
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+    i2s_config_t cfg={};
+    cfg.mode=(i2s_mode_t)(I2S_MODE_MASTER|I2S_MODE_TX);
+    cfg.sample_rate=16000;
+    cfg.bits_per_sample=I2S_BITS_PER_SAMPLE_16BIT;
+    cfg.channel_format=I2S_CHANNEL_FMT_RIGHT_LEFT;
+    cfg.communication_format=I2S_COMM_FORMAT_STAND_I2S;
+    cfg.intr_alloc_flags=0;
+    cfg.dma_buf_count=8;
+    cfg.dma_buf_len=256;
+    cfg.tx_desc_auto_clear=true;
+    cfg.use_apll=false;
+    if(i2s_driver_install(I2S_NUM_0,&cfg,0,nullptr)!=ESP_OK){ESP_LOGW(kTag,"I2S install failed");return false;}
+    i2s_pin_config_t pins={};
+    pins.mck_io_num=I2S_PIN_NO_CHANGE;
+    pins.bck_io_num=GPIO_NUM_41;
+    pins.ws_io_num=GPIO_NUM_43;
+    pins.data_out_num=GPIO_NUM_42;
+    pins.data_in_num=I2S_PIN_NO_CHANGE;
+    if(i2s_set_pin(I2S_NUM_0,&pins)!=ESP_OK){i2s_driver_uninstall(I2S_NUM_0);ESP_LOGW(kTag,"I2S pin setup failed");return false;}
+    audio_ready=true;
+    ESP_LOGI(kTag,"ES8311 speaker ready");
+    return true;
+}
+void play_tone(std::uint32_t frequency,std::uint32_t duration_ms) {
+    if(!audio_ready||!sound_enabled||frequency==0)return;
+    constexpr std::uint32_t rate=16000;
+    constexpr size_t chunk=128;
+    std::int16_t samples[chunk*2];
+    const std::uint32_t total=rate*duration_ms/1000;
+    for(std::uint32_t base=0;base<total;base+=chunk) {
+        const size_t n=std::min((std::size_t)chunk,(std::size_t)(total-base));
+        for(size_t i=0;i<n;i++) {
+            const float phase=6.28318530718f*(float)frequency*(float)(base+i)/(float)rate;
+            const std::int16_t sample=(std::int16_t)(4200.0f*std::sinf(phase));
+            samples[i*2]=sample;samples[i*2+1]=sample;
+        }
+        size_t written=0;
+        if(i2s_write(I2S_NUM_0,samples,n*4,&written,pdMS_TO_TICKS(100))!=ESP_OK||written<n*4)break;
+    }
+}
 void init_sd_card() {
     spi_bus_config_t bus={};
     bus.mosi_io_num=GPIO_NUM_14; bus.miso_io_num=GPIO_NUM_39;
@@ -775,6 +829,7 @@ void poll_keyboard() {
         std::uint8_t event=0;if(keyboard_read(0x04,&event)!=ESP_OK||event==0)break;
         if((event&0x80)==0)continue; // TCA8418: bit 7 = key press, 0 = release.
         const std::uint8_t key=event&0x7F;
+        if(audio_ready&&sound_enabled)play_tone(1250,10);
         const int ix=key>0?key-1:0, rr=ix/10, rc=ix%10;
         const int col=rr*2+(rc>3?1:0),row=(rc+4)%4;
         char ch=(row>=0&&row<4&&col>=0&&col<14)?decode_key(row,col):0;
@@ -816,7 +871,8 @@ void poll_keyboard() {
                 else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;note_scroll=std::max(0,note_length/35-5);save_note();}
             }
         } else if(active_app==2){
-            if(key==KEY_BACKSPACE){if(calc_length>0)calc_buffer[--calc_length]=0;}
+            if(key==KEY_ESC)active_app=-1;
+            else if(key==KEY_BACKSPACE){if(calc_length>0)calc_buffer[--calc_length]=0;}
             else if(key==KEY_ENTER)calculate();
             else if(ch>=32&&ch<127&&calc_length<(int)sizeof(calc_buffer)-2){calc_buffer[calc_length++]=ch;calc_buffer[calc_length]=0;}
         } else if(active_app==3){
@@ -843,14 +899,16 @@ void poll_keyboard() {
                     if(wifi_setup_step==1&&std::strlen(wifi_ssid_input)<32){size_t n=std::strlen(wifi_ssid_input);wifi_ssid_input[n]=ch;wifi_ssid_input[n+1]=0;}
                     else if(wifi_setup_step==2&&std::strlen(wifi_password_input)<64){size_t n=std::strlen(wifi_password_input);wifi_password_input[n]=ch;wifi_password_input[n+1]=0;}
                 }
-            } else if(is_up(key)||is_down(key)){settings_selection=(settings_selection+(is_up(key)?3:1))%4;}
+            } else if(is_up(key)||is_down(key)){settings_selection=(settings_selection+(is_up(key)?4:1))%5;}
             else if(is_left(key)||is_right(key)){
                 if(settings_selection==0){setting_brightness=std::max(0,std::min(2,setting_brightness+(is_right(key)?1:-1)));apply_brightness();save_settings();}
                 else if(settings_selection==1){dark_theme=!dark_theme;save_settings();}
+                else if(settings_selection==4){sound_enabled=!sound_enabled;save_settings();}
             } else if(key==KEY_ENTER){
                 if(settings_selection==1){dark_theme=!dark_theme;save_settings();}
                 else if(settings_selection==2){load_wifi_settings();wifi_setup_step=1;}
                 else if(settings_selection==3){bluetooth_screen=true;if(!start_ble_scan())std::snprintf(store_message,sizeof(store_message),"BLE START FAILED");}
+                else if(settings_selection==4){sound_enabled=!sound_enabled;save_settings();}
             } else if(key==KEY_ESC)active_app=-1;
         } else if(active_app==5){
             if(is_back(key))active_app=-1;
@@ -918,7 +976,7 @@ extern "C" void app_main(void) {
     channel.hpoint=0;
     ESP_ERROR_CHECK(ledc_channel_config(&channel));
     init_display();
-    init_keyboard();init_sd_card();load_settings();load_note();seed_store();apply_brightness();render_home();
+    init_keyboard();init_audio();init_sd_card();load_settings();load_note();seed_store();apply_brightness();render_home();play_tone(660,90);
     for(;;){
         const int old_app=active_app,old_sel=selected_app;
         poll_keyboard();
@@ -929,7 +987,7 @@ extern "C" void app_main(void) {
         }
         boot_button_was_pressed=boot_pressed;
         const std::int64_t now=esp_timer_get_time();
-        if(timer_running&&now>=timer_end_us){timer_running=false;timer_seconds=0;}
+        if(timer_running&&now>=timer_end_us){timer_running=false;timer_seconds=0;play_tone(880,180);play_tone(1175,180);play_tone(1568,260);}
         if(active_app==11&&game_started&&!game_over&&now-game_tick_us>220000){
             game_tick_us=now;
             for(int i=snake_len-1;i>0;i--){snake_x[i]=snake_x[i-1];snake_y[i]=snake_y[i-1];}
