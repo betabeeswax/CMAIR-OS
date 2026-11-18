@@ -446,6 +446,20 @@ bool package_path(char* out,size_t cap,const char* id) {
     if(!id||!id[0]||std::strstr(id,"..")||std::strchr(id,'/'))return false;
     std::snprintf(out,cap,"/sdcard/MCAI-OS/apps/%s.json",id);return true;
 }
+int store_builtin_index(const char* id) {
+    if(std::strcmp(id,"file-manager")==0)return 0;
+    if(std::strcmp(id,"calculator")==0)return 2;
+    if(std::strcmp(id,"settings")==0)return 3;
+    if(std::strcmp(id,"system-information")==0)return 4;
+    if(std::strcmp(id,"app-store")==0)return 5;
+    if(std::strcmp(id,"clock")==0)return 6;
+    if(std::strcmp(id,"timer")==0)return 7;
+    if(std::strcmp(id,"keyboard-test")==0)return 8;
+    if(std::strcmp(id,"storage-manager")==0)return 9;
+    if(std::strcmp(id,"diagnostics")==0)return 10;
+    if(std::strcmp(id,"snake")==0)return 11;
+    return -1;
+}
 bool package_installed(const char* id) {
     char path[160];if(!package_path(path,sizeof(path),id))return false;
     struct stat st{};return stat(path,&st)==0&&S_ISREG(st.st_mode);
@@ -595,7 +609,7 @@ void render_app() {
     case 5:
         draw_text("GITHUB APP STORE",8,25,1,accent);
         draw_text(catalogue_loaded?"MCAI-OS-APPS / MAIN":"GITHUB CATALOGUE",8,39,1,ink);
-        for(int i=0;i<4;i++){int ix=store_scroll+i;if(ix>=store_count)break;char row[40];std::snprintf(row,sizeof(row),"%c %.20s %s",ix==store_selected?'>':' ',store_names[ix],package_installed(store_ids[ix])?"INSTALLED":(std::strcmp(store_status[ix],"available")==0?"AVAILABLE":(std::strcmp(store_status[ix],"experimental")==0?"EXPERIMENTAL":"PLANNED")));draw_text(row,8,54+i*13,1,ix==store_selected?accent:ink);}
+        for(int i=0;i<4;i++){int ix=store_scroll+i;if(ix>=store_count)break;char row[40];std::snprintf(row,sizeof(row),"%c %.20s %s",ix==store_selected?'>':' ',store_names[ix],store_builtin_index(store_ids[ix])>=0?"BUILT-IN":(package_installed(store_ids[ix])?"INSTALLED":(std::strcmp(store_status[ix],"available")==0?"AVAILABLE":(std::strcmp(store_status[ix],"experimental")==0?"EXPERIMENTAL":"PLANNED"))));draw_text(row,8,54+i*13,1,ix==store_selected?accent:ink);}
         draw_text(store_message,8,110,1,muted);draw_text("UP/DOWN ENTER INFO",8,122,1,muted);break;
     case 6: {
         std::time_t now=std::time(nullptr);std::tm tmv{};localtime_r(&now,&tmv);
@@ -842,9 +856,18 @@ void poll_keyboard() {
             else if(is_up(key)||is_left(key)){if(store_selected>0)--store_selected;if(store_selected<store_scroll)store_scroll=store_selected;}
             else if(is_down(key)||is_right(key)){if(store_selected+1<store_count)++store_selected;if(store_selected>=store_scroll+4)store_scroll=store_selected-3;}
             else if(key==KEY_ENTER){
-                if(package_installed(store_ids[store_selected])) {
-                    if(!launch_installed_package(store_ids[store_selected]))std::snprintf(store_message,sizeof(store_message),"APP LOAD FAILED");
-                } else install_store_package();
+                if(store_count<=0){std::snprintf(store_message,sizeof(store_message),"CATALOGUE EMPTY");}
+                else {
+                    const int builtin=store_builtin_index(store_ids[store_selected]);
+                    if(builtin>=0){
+                        active_app=builtin;
+                        if(builtin==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}
+                        if(builtin==5)refresh_store();
+                        if(builtin==6&&connect_wifi_from_sd())start_time_sync();
+                    } else if(package_installed(store_ids[store_selected])) {
+                        if(!launch_installed_package(store_ids[store_selected]))std::snprintf(store_message,sizeof(store_message),"APP LOAD FAILED");
+                    } else install_store_package();
+                }
             }
         } else if(active_app==13){
             if(is_back(key)){package_running=false;active_app=5;}
