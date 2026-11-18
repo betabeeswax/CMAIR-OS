@@ -85,3 +85,30 @@ Apps should run with limited permissions. Network access, microphone, camera, IR
 ## Contributing
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`sdk/README.md`](sdk/README.md) before adding a service or app. Hardware changes must include the exact board revision and a test procedure.
+
+## Cardputer ADV App Store
+
+The firmware App Store reads the live catalogue from
+[`betabeeswax/MCAI-OS-APPS`](https://github.com/betabeeswax/MCAI-OS-APPS)
+over HTTPS. It does not install roadmap entries or pretend that planned apps
+are downloadable.
+
+### Wi-Fi setup for the App Store
+
+1. Put the microSD card in your computer.
+2. Create the folder `MCAI-OS` on the card if it does not exist.
+3. Inside it, create a plain-text file named `wifi.cfg`.
+4. Put the Wi-Fi network name on line 1 and its password on line 2.
+5. Safely eject the card, insert it into the Cardputer ADV, and open App Store.
+
+Example file (replace these example values; do not publish your real password):
+
+```text
+Your Wi-Fi name
+Your Wi-Fi password
+```
+
+The current App Store integration downloads and displays the repository catalogue.
+An entry marked `planned` is not an installable app. Package downloading and the
+sandboxed third-party app runtime are still being developed; the firmware will
+not claim an app is installed until that runtime and a compatible package exist.
