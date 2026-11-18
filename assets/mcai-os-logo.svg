@@ -1,14 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="900" height="360" viewBox="0 0 900 360" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000" role="img" aria-labelledby="title desc">
   <title id="title">MCAI OS</title>
-  <desc id="desc">MCAI in large bold lettering with a smaller OS underneath the right side.</desc>
-  <defs>
-    <linearGradient id="a" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#62f0ce"/>
-      <stop offset="1" stop-color="#46a8ff"/>
-    </linearGradient>
-  </defs>
-  <rect width="900" height="360" rx="44" fill="#0b1020"/>
-  <path d="M70 288V72h70l92 118 92-118h70v216h-70V181l-92 112-92-112v107z" fill="url(#a)"/>
-  <text x="395" y="288" font-family="Arial, Helvetica, sans-serif" font-size="250" font-weight="900" letter-spacing="-12" fill="#f4f8ff">CAI</text>
-  <text x="745" y="340" font-family="Arial, Helvetica, sans-serif" font-size="74" font-weight="800" letter-spacing="8" fill="#62f0ce">OS</text>
+  <desc id="desc">Four white keyboard keys spell MCAI above a retro grey operating-system window containing large black OS lettering, on a bright green background.</desc>
+  <rect width="1000" height="1000" fill="#7ed957"/>
+  <g stroke="#000" stroke-width="12" stroke-linejoin="round">
+    <g fill="#000">
+      <rect x="18" y="68" width="236" height="232" rx="34"/>
+      <rect x="266" y="68" width="236" height="232" rx="34"/>
+      <rect x="514" y="68" width="236" height="232" rx="34"/>
+      <rect x="762" y="68" width="220" height="232" rx="34"/>
+    </g>
+    <g fill="#fff">
+      <rect x="26" y="62" width="236" height="232" rx="34"/>
+      <rect x="274" y="62" width="236" height="232" rx="34"/>
+      <rect x="522" y="62" width="236" height="232" rx="34"/>
+      <rect x="770" y="62" width="220" height="232" rx="34"/>
+    </g>
+  </g>
+  <g fill="#000" font-family="Arial, Helvetica, sans-serif" font-size="190" font-weight="500" text-anchor="middle">
+    <text x="144" y="245">M</text>
+    <text x="392" y="245">C</text>
+    <text x="640" y="245">A</text>
+    <text x="880" y="245">I</text>
+  </g>
+  <rect x="0" y="382" width="1000" height="618" fill="#bfbebf" stroke="#000" stroke-width="8"/>
+  <rect x="14" y="396" width="972" height="590" fill="#737373" stroke="#000" stroke-width="5"/>
+  <rect x="26" y="410" width="948" height="56" fill="#120078"/>
+  <g fill="#bfbebf" stroke="#000" stroke-width="4">
+    <rect x="855" y="423" width="32" height="31"/>
+    <rect x="899" y="423" width="32" height="31"/>
+    <rect x="943" y="423" width="32" height="31"/>
+  </g>
+  <g stroke="#000" stroke-width="4" fill="none">
+    <path d="M862 439h18"/>
+    <rect x="908" y="430" width="14" height="14"/>
+    <path d="M951 430l16 16m0-16l-16 16"/>
+  </g>
+  <g fill="#000" font-family="Arial, Helvetica, sans-serif" font-size="470" font-weight="900" letter-spacing="-24">
+    <text x="115" y="885">OS</text>
+  </g>
 </svg>
