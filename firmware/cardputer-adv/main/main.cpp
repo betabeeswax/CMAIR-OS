@@ -27,6 +27,7 @@
 #include <cmath>
 #include <sys/statvfs.h>
 #include <sys/time.h>
+#include <unistd.h>
 
 namespace {
 constexpr char kTag[] = "MCAI-OS";
@@ -52,7 +53,8 @@ bool sd_ready = false;
 int selected_app = 0;
 int active_app = -1;
 int setting_brightness = 1;
-int calc_value = 0;
+char calc_buffer[48] = {};
+int calc_length = 0;
 int file_scroll = 0;
 char note_buffer[512] = {};
 int note_length = 0, note_scroll = 0;
@@ -66,7 +68,6 @@ char viewer_buffer[700] = {};
 bool viewing_file = false;
 char store_names[24][64] = {};
 int store_count = 0, store_selected = 0;
-bool store_installed = false;
 char store_message[40] = "PRESS ENTER TO INSTALL";
 char clock_input[8] = {};
 int clock_len = 0;
@@ -201,7 +202,7 @@ void refresh_files() {
     closedir(d);
 }
 void refresh_store() {
-    store_count=0;store_selected=0;store_installed=false;
+    store_count=0;store_selected=0;
     DIR* d=opendir("/sdcard/MCAI-OS/store");if(!d)return;
     struct dirent* e;while((e=readdir(d))!=nullptr&&store_count<24){
         const size_t n=std::strlen(e->d_name);
@@ -473,7 +474,6 @@ extern "C" void app_main(void) {
     ledc_timer_config_t timer={};timer.speed_mode=LEDC_LOW_SPEED_MODE;timer.duty_resolution=LEDC_TIMER_13_BIT;timer.timer_num=LEDC_TIMER_0;timer.freq_hz=5000;timer.clk_cfg=LEDC_AUTO_CLK;ESP_ERROR_CHECK(ledc_timer_config(&timer));
     ledc_channel_config_t channel={};channel.gpio_num=kLcdBacklight;channel.speed_mode=LEDC_LOW_SPEED_MODE;channel.channel=LEDC_CHANNEL_0;channel.intr_type=LEDC_INTR_DISABLE;channel.timer_sel=LEDC_TIMER_0;channel.duty=4096;channel.hpoint=0;ESP_ERROR_CHECK(ledc_channel_config(&channel));
     init_keyboard();init_sd_card();load_settings();load_note();seed_store();apply_brightness();render_home();
-    std::int64_t last_clock_draw=0;
     for(;;){
         const int old_app=active_app,old_sel=selected_app;
         poll_keyboard();
