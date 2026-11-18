@@ -79,7 +79,6 @@ bool sound_enabled=true, audio_ready=false;
 int wifi_setup_step=0;
 char wifi_ssid_input[33]={};
 char wifi_password_input[65]={};
-int wifi_input_length=0;
 bool bluetooth_screen=false, ble_ready=false, ble_scan_active=false;
 int ble_device_count=0, ble_device_scroll=0;
 char ble_devices[12][32]={};
@@ -243,7 +242,7 @@ void open_note(int index) {
     note_editing=true; note_scroll=0;
 }
 void create_note() {
-    if(!sd_ready){std::snprintf(note_filename,sizeof(note_filename),"");return;}
+    if(!sd_ready){note_filename[0]=0;return;}
     mkdir("/sdcard/MCAI-OS",0775); mkdir("/sdcard/MCAI-OS/notes",0775);
     char name[40]; int number=1;
     do {std::snprintf(name,sizeof(name),"NOTE-%03d.txt",number++);char full[100];std::snprintf(full,sizeof(full),"/sdcard/MCAI-OS/notes/%s",name);struct stat st{};if(stat(full,&st)!=0)break;} while(number<1000);
@@ -975,7 +974,7 @@ extern "C" void app_main(void) {
     channel.hpoint=0;
     ESP_ERROR_CHECK(ledc_channel_config(&channel));
     init_display();
-    init_keyboard();init_audio();init_sd_card();load_settings();load_note();seed_store();apply_brightness();render_home();play_tone(660,90);
+    init_keyboard();init_audio();init_sd_card();load_settings();seed_store();apply_brightness();render_home();play_tone(660,90);
     for(;;){
         const int old_app=active_app,old_sel=selected_app;
         poll_keyboard();
