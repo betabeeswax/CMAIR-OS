@@ -39,6 +39,8 @@ sdmmc_card_t* sd_card = nullptr;
 bool keyboard_ready = false;
 bool sd_ready = false;
 int selected_app = 0;
+int active_app = -1;
+bool boot_button_was_pressed = false;
 constexpr const char* kApps[] = {"FILE MANAGER", "NOTES", "CALCULATOR", "SETTINGS", "SYSTEM INFO"};
 constexpr int kAppCount = sizeof(kApps) / sizeof(kApps[0]);
 alignas(4) std::uint16_t framebuffer[kWidth * kHeight];
@@ -104,6 +106,14 @@ void render_home() {
     fill_rect(0,0,kWidth,3,accent);
     draw_text("MCAI-OS",10,9,2,accent);
     draw_text(sd_ready ? "SD READY" : "NO SD",151,14,1,sd_ready?accent:muted);
+    if (active_app >= 0) {
+        draw_text("APP",10,38,1,muted);
+        draw_text(kApps[active_app],10,58,2,white);
+        draw_text("NOT READY YET",10,88,1,accent);
+        draw_text("PRESS BACK TO RETURN",10,112,1,muted);
+        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
+        return;
+    }
     draw_text("HOME",10,34,1,muted);
     for (int i=0;i<kAppCount;i++) {
         const int y=47+i*16;
@@ -119,6 +129,12 @@ void init_display() {
     gpio_config_t bl = {};
     bl.pin_bit_mask = 1ULL << kLcdBacklight; bl.mode = GPIO_MODE_OUTPUT;
     ESP_ERROR_CHECK(gpio_config(&bl));
+    gpio_config_t boot = {};
+    boot.pin_bit_mask = 1ULL << GPIO_NUM_0;
+    boot.mode = GPIO_MODE_INPUT;
+    boot.pull_up_en = GPIO_PULLUP_ENABLE;
+    boot.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    ESP_ERROR_CHECK(gpio_config(&boot));
     ESP_ERROR_CHECK(gpio_set_level(kLcdBacklight,1));
     spi_bus_config_t bus = {};
     bus.sclk_io_num=kLcdSclk; bus.mosi_io_num=kLcdMosi; bus.miso_io_num=-1;
@@ -195,13 +211,21 @@ void poll_keyboard() {
     while(count--) {
         std::uint8_t event=0;
         if(keyboard_read(0x04,&event)!=ESP_OK || event==0) break;
-        if((event&0x80)==0) continue; // Ignore key releases.
-        const std::uint8_t key=event&0x7F;
-        // TCA8418 event codes for Cardputer ADV navigation keys.
-        if(key==0x39 || key==0x36) selected_app=(selected_app+kAppCount-1)%kAppCount;
-        else if(key==0x3A || key==0x40) selected_app=(selected_app+1)%kAppCount;
-        else if(key==0x43) ESP_LOGI(kTag,"Selected app: %s (app services are being built)",kApps[selected_app]);
-        else if(key==0x01) ESP_LOGI(kTag,"Home");
+        // TCA8418 sets bit 7 for RELEASE; bit 7 clear means PRESS.
+        if((event & 0x80) != 0) continue;
+        const std::uint8_t key = event & 0x7F;
+        // ADV matrix values are decimal row/column scan codes, not hex key IDs.
+        // Cardputer navigation keys: comma=44, semicolon=51, period=54, slash=64.
+        if(active_app >= 0) {
+            if(key == 65 || key == 67) active_app = -1; // Backspace or Enter returns to launcher.
+        } else if(key == 51 || key == 44) {
+            selected_app = (selected_app + kAppCount - 1) % kAppCount;
+        } else if(key == 54 || key == 64) {
+            selected_app = (selected_app + 1) % kAppCount;
+        } else if(key == 67) {
+            active_app = selected_app;
+            ESP_LOGI(kTag, "Opened menu item: %s", kApps[selected_app]);
+        }
     }
     std::uint8_t status=0;
     if(keyboard_read(0x02,&status)==ESP_OK && (status&0x01)) keyboard_write(0x02,0x01);
@@ -216,9 +240,19 @@ extern "C" void app_main(void) {
     init_sd_card();
     render_home();
     for(;;) {
-        const int previous=selected_app;
+        const int previous = selected_app;
+        const int previous_page = active_app;
         poll_keyboard();
-        if(previous!=selected_app) render_home();
-        vTaskDelay(pdMS_TO_TICKS(30));
+
+        // GPIO0 is the Cardputer ADV BOOT/shoulder button and acts as Select.
+        const bool boot_pressed = gpio_get_level(GPIO_NUM_0) == 0;
+        if(boot_pressed && !boot_button_was_pressed) {
+            if(active_app >= 0) active_app = -1;
+            else active_app = selected_app;
+        }
+        boot_button_was_pressed = boot_pressed;
+
+        if(previous != selected_app || previous_page != active_app) render_home();
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
