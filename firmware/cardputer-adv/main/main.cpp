@@ -192,7 +192,7 @@ void load_wifi_settings() {
     std::fgets(wifi_ssid_input,sizeof(wifi_ssid_input),f);
     std::fgets(wifi_password_input,sizeof(wifi_password_input),f);
     std::fclose(f);
-    auto trim=[](char* v){size_t n=std::strlen(v);while(n&&(v[n-1]=='\\n'||v[n-1]=='\\r'))v[--n]=0;};
+    auto trim=[](char* v){size_t n=std::strlen(v);while(n&&(v[n-1]=='\n'||v[n-1]=='\r'))v[--n]=0;};
     trim(wifi_ssid_input);trim(wifi_password_input);
 }
 bool save_wifi_settings() {
@@ -200,14 +200,14 @@ bool save_wifi_settings() {
     mkdir("/sdcard/MCAI-OS",0775);
     FILE* f=std::fopen("/sdcard/MCAI-OS/wifi.cfg","w");
     if(!f)return false;
-    std::fprintf(f,"%s\\n%s\\n",wifi_ssid_input,wifi_password_input);
+    std::fprintf(f,"%s\n%s\n",wifi_ssid_input,wifi_password_input);
     return std::fclose(f)==0;
 }
 void save_settings() {
     if(!sd_ready) return;
     mkdir("/sdcard/MCAI-OS",0775);
     FILE* f=std::fopen("/sdcard/MCAI-OS/settings.cfg","w");
-    if(f){std::fprintf(f,"%d %d\n",setting_brightness,dark_theme?1:0);std::fclose(f);}
+    if(f){std::fprintf(f,"%d %d %d\n",setting_brightness,dark_theme?1:0,sound_enabled?1:0);std::fclose(f);}
 }
 void load_settings() {
     if(!sd_ready) return;
