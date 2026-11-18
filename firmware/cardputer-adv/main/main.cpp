@@ -115,6 +115,7 @@ int food_x = 12, food_y = 4, game_score = 0;
 std::int64_t game_tick_us = 0;
 bool game_over = false;
 bool dark_theme = true;
+bool ui_dirty=true;
 bool boot_button_was_pressed = false;
 constexpr int kAppsPerPage = 5;
 constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT"};
@@ -829,6 +830,7 @@ void poll_keyboard() {
         std::uint8_t event=0;if(keyboard_read(0x04,&event)!=ESP_OK||event==0)break;
         if((event&0x80)==0)continue; // TCA8418: bit 7 = key press, 0 = release.
         const std::uint8_t key=event&0x7F;
+        ui_dirty=true;
         if(audio_ready&&sound_enabled)play_tone(1250,10);
         const int ix=key>0?key-1:0, rr=ix/10, rc=ix%10;
         const int col=rr*2+(rc>3?1:0),row=(rc+4)%4;
@@ -985,7 +987,7 @@ extern "C" void app_main(void) {
         }
         boot_button_was_pressed=boot_pressed;
         const std::int64_t now=esp_timer_get_time();
-        if(timer_running&&now>=timer_end_us){timer_running=false;timer_seconds=0;play_tone(880,180);play_tone(1175,180);play_tone(1568,260);}
+        if(timer_running&&now>=timer_end_us){timer_running=false;timer_seconds=0;ui_dirty=true;play_tone(880,180);play_tone(1175,180);play_tone(1568,260);}
         if(active_app==11&&game_started&&!game_over&&now-game_tick_us>220000){
             game_tick_us=now;
             for(int i=snake_len-1;i>0;i--){snake_x[i]=snake_x[i-1];snake_y[i]=snake_y[i-1];}
@@ -994,7 +996,7 @@ extern "C" void app_main(void) {
             for(int i=1;i<snake_len;i++)if(snake_x[0]==snake_x[i]&&snake_y[0]==snake_y[i])game_over=true;
             if(snake_x[0]==food_x&&snake_y[0]==food_y){if(snake_len<47)++snake_len;++game_score;food_x=(food_x+7)%23;food_y=(food_y+3)%9;}
         }
-        if(old_app!=active_app||old_sel!=selected_app||active_app==6||active_app==7||active_app==11||active_app==0||active_app==5||active_app==8)render_home();
+        if(old_app!=active_app||old_sel!=selected_app||active_app==6||active_app==7||active_app==11||active_app==5||ui_dirty){render_home();ui_dirty=false;}
         if(active_app==1&&note_editing&&note_length>0&&note_length%24==0)save_note();
         vTaskDelay(pdMS_TO_TICKS(60));
     }
