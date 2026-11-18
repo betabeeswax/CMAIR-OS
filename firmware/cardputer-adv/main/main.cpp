@@ -13,6 +13,7 @@
 #include "esp_crt_bundle.h"
 #include "nvs_flash.h"
 #include "cJSON.h"
+#include "mbedtls/sha256.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
@@ -72,10 +73,11 @@ bool file_is_dir[32] = {};
 int file_count = 0, file_selected = 0;
 char viewer_buffer[700] = {};
 bool viewing_file = false;
-char store_names[106][64] = {}; char store_status[106][20] = {};
+char store_names[128][64] = {}; char store_status[128][20] = {}; char store_ids[128][64] = {}; char store_urls[128][256] = {}; char store_hashes[128][65] = {};
 int store_count=0, store_selected=0, store_scroll=0;
 char store_message[40]="ADD WIFI.CFG ON SD"; bool wifi_started=false, catalogue_loaded=false;
 char catalogue_buffer[32768]={}; size_t catalogue_length=0;
+bool package_running=false; char package_title[64]=""; char package_subtitle[96]=""; char package_id[64]=""; int package_counter=0, package_increment=1;
 char clock_input[8] = {};
 int clock_len = 0;
 int timer_seconds = 60;
@@ -177,8 +179,7 @@ void load_note() {
 bool eval_expr(const char*& p,double& out);
 bool eval_factor(const char*& p,double& out) {
     while(*p==' ') ++p;
-    if(*p=='-'){++p;if(!eval_factor(p,out))return false;out=-out;return true;}
-    if(*p=='('){++p;if(!eval_expr(p,out))return false;while(*p==' ')++p;if(*p!=')')return false;++p;return true;}
+    if(*p=='-'){++p;if(!eval_factor(p,out))return false;out=-out;return true;}    if(*p=='('){++p;if(!eval_expr(p,out))return false;while(*p==' ')++p;if(*p!=')')return false;++p;return true;}
     char* end=nullptr;out=std::strtod(p,&end);if(end==p)return false;p=end;return std::isfinite(out);
 }
 bool eval_term(const char*& p,double& out) {
@@ -266,21 +267,100 @@ void refresh_store() {
     if(!cJSON_IsArray(apps)){if(root)cJSON_Delete(root);std::snprintf(store_message,sizeof(store_message),"BAD CATALOGUE JSON");return;}
     cJSON* app=nullptr;
     cJSON_ArrayForEach(app,apps){
-        if(store_count>=106)break;
+        if(store_count>=128)break;
         cJSON* name=cJSON_GetObjectItemCaseSensitive(app,"name");
+        cJSON* id=cJSON_GetObjectItemCaseSensitive(app,"id");
         cJSON* status_item=cJSON_GetObjectItemCaseSensitive(app,"status");
-        if(!cJSON_IsString(name))continue;
+        cJSON* package=cJSON_GetObjectItemCaseSensitive(app,"package");
+        if(!cJSON_IsString(name)||!cJSON_IsString(id))continue;
         std::snprintf(store_names[store_count],64,"%s",name->valuestring);
+        std::snprintf(store_ids[store_count],64,"%s",id->valuestring);
         std::snprintf(store_status[store_count],20,"%s",cJSON_IsString(status_item)?status_item->valuestring:"unknown");
+        if(cJSON_IsObject(package)){
+            cJSON* url=cJSON_GetObjectItemCaseSensitive(package,"url");
+            cJSON* hash=cJSON_GetObjectItemCaseSensitive(package,"sha256");
+            cJSON* format=cJSON_GetObjectItemCaseSensitive(package,"format");
+            if(cJSON_IsString(url)&&cJSON_IsString(hash)&&cJSON_IsString(format)&&
+               std::strcmp(format->valuestring,"mcai-app-v1")==0){
+                std::snprintf(store_urls[store_count],256,"%s",url->valuestring);
+                std::snprintf(store_hashes[store_count],65,"%s",hash->valuestring);
+            }
+        }
         ++store_count;
     }
     cJSON_Delete(root);catalogue_loaded=true;
     std::snprintf(store_message,sizeof(store_message),"GITHUB: %d APPS",store_count);
 }
+bool package_path(char* out,size_t cap,const char* id) {
+    if(!id||!id[0]||std::strstr(id,"..")||std::strchr(id,'/'))return false;
+    std::snprintf(out,cap,"/sdcard/MCAI-OS/apps/%s.json",id);return true;
+}
+bool package_installed(const char* id) {
+    char path[160];if(!package_path(path,sizeof(path),id))return false;
+    struct stat st{};return stat(path,&st)==0&&S_ISREG(st.st_mode);
+}
+bool launch_installed_package(const char* id) {
+    char path[160];if(!sd_ready||!package_path(path,sizeof(path),id))return false;
+    FILE* f=std::fopen(path,"r");if(!f)return false;
+    char data[4096]={};size_t n=std::fread(data,1,sizeof(data)-1,f);std::fclose(f);
+    cJSON* root=cJSON_Parse(data);if(!root)return false;
+    cJSON* fmt=cJSON_GetObjectItemCaseSensitive(root,"format");
+    cJSON* pid=cJSON_GetObjectItemCaseSensitive(root,"id");
+    cJSON* target=cJSON_GetObjectItemCaseSensitive(root,"target");
+    cJSON* ui=cJSON_GetObjectItemCaseSensitive(root,"ui");
+    cJSON* title=ui?cJSON_GetObjectItemCaseSensitive(ui,"title"):nullptr;
+    cJSON* subtitle=ui?cJSON_GetObjectItemCaseSensitive(ui,"subtitle"):nullptr;
+    cJSON* initial=ui?cJSON_GetObjectItemCaseSensitive(ui,"initial"):nullptr;
+    cJSON* increment=ui?cJSON_GetObjectItemCaseSensitive(ui,"increment"):nullptr;
+    bool valid=cJSON_IsString(fmt)&&std::strcmp(fmt->valuestring,"mcai-app-v1")==0&&
+      cJSON_IsString(pid)&&std::strcmp(pid->valuestring,id)==0&&
+      cJSON_IsString(target)&&std::strcmp(target->valuestring,"cardputer-adv")==0&&
+      cJSON_IsObject(ui)&&cJSON_IsString(title)&&cJSON_IsString(subtitle)&&
+      cJSON_IsNumber(initial)&&cJSON_IsNumber(increment);
+    if(valid){
+      std::snprintf(package_id,sizeof(package_id),"%s",id);
+      std::snprintf(package_title,sizeof(package_title),"%s",title->valuestring);
+      std::snprintf(package_subtitle,sizeof(package_subtitle),"%s",subtitle->valuestring);
+      package_counter=std::max(-999999,std::min(999999,(int)initial->valuedouble));
+      package_increment=std::max(1,std::min(1000,(int)increment->valuedouble));
+      package_running=true;active_app=13;
+    }
+    cJSON_Delete(root);return valid;
+}
 void install_store_package() {
     if(!catalogue_loaded||store_count==0)return;
-    if(std::strcmp(store_status[store_selected],"available")!=0){std::snprintf(store_message,sizeof(store_message),"NOT RELEASED YET");return;}
-    std::snprintf(store_message,sizeof(store_message),"PACKAGE NOT PUBLISHED");
+    if(std::strcmp(store_status[store_selected],"available")!=0||!store_urls[store_selected][0]||std::strlen(store_hashes[store_selected])!=64){
+      std::snprintf(store_message,sizeof(store_message),"NO VERIFIED PACKAGE");return;
+    }
+    if(!sd_ready){std::snprintf(store_message,sizeof(store_message),"INSERT SD CARD");return;}
+    if(package_installed(store_ids[store_selected])){std::snprintf(store_message,sizeof(store_message),"INSTALLED - ENTER TO OPEN");return;}
+    catalogue_length=0;catalogue_buffer[0]=0;
+    esp_http_client_config_t cfg={};cfg.url=store_urls[store_selected];cfg.event_handler=catalogue_http_event;
+    cfg.timeout_ms=20000;cfg.buffer_size=1024;cfg.crt_bundle_attach=esp_crt_bundle_attach;
+    esp_http_client_handle_t client=esp_http_client_init(&cfg);
+    if(!client){std::snprintf(store_message,sizeof(store_message),"PACKAGE HTTP INIT FAIL");return;}
+    esp_err_t result=esp_http_client_perform(client);int status=esp_http_client_get_status_code(client);esp_http_client_cleanup(client);
+    if(result!=ESP_OK||status!=200||catalogue_length==0){std::snprintf(store_message,sizeof(store_message),"PACKAGE DOWNLOAD FAIL");return;}
+    unsigned char digest[32];if(mbedtls_sha256((const unsigned char*)catalogue_buffer,catalogue_length,digest,0)!=0){
+      std::snprintf(store_message,sizeof(store_message),"CHECKSUM ERROR");return;
+    }
+    char hex[65];for(int i=0;i<32;i++)std::snprintf(hex+i*2,3,"%02x",digest[i]);hex[64]=0;
+    if(std::strcmp(hex,store_hashes[store_selected])!=0){std::snprintf(store_message,sizeof(store_message),"CHECKSUM MISMATCH");return;}
+    cJSON* root=cJSON_Parse(catalogue_buffer);
+    cJSON* fmt=root?cJSON_GetObjectItemCaseSensitive(root,"format"):nullptr;
+    cJSON* id=root?cJSON_GetObjectItemCaseSensitive(root,"id"):nullptr;
+    cJSON* target=root?cJSON_GetObjectItemCaseSensitive(root,"target"):nullptr;
+    bool valid=cJSON_IsString(fmt)&&std::strcmp(fmt->valuestring,"mcai-app-v1")==0&&
+      cJSON_IsString(id)&&std::strcmp(id->valuestring,store_ids[store_selected])==0&&
+      cJSON_IsString(target)&&std::strcmp(target->valuestring,"cardputer-adv")==0;
+    if(root)cJSON_Delete(root);
+    if(!valid){std::snprintf(store_message,sizeof(store_message),"INVALID APP PACKAGE");return;}
+    mkdir("/sdcard/MCAI-OS",0775);mkdir("/sdcard/MCAI-OS/apps",0775);
+    char path[160];if(!package_path(path,sizeof(path),store_ids[store_selected])){std::snprintf(store_message,sizeof(store_message),"BAD APP ID");return;}
+    FILE* f=std::fopen(path,"w");if(!f){std::snprintf(store_message,sizeof(store_message),"SD WRITE FAILED");return;}
+    size_t wrote=std::fwrite(catalogue_buffer,1,catalogue_length,f);bool saved=std::fclose(f)==0&&wrote==catalogue_length;
+    if(!saved){unlink(path);std::snprintf(store_message,sizeof(store_message),"APP SAVE FAILED");return;}
+    std::snprintf(store_message,sizeof(store_message),"INSTALLED - ENTER TO OPEN");
 }
 void seed_store() { /* Store entries are fetched from the official GitHub catalogue. */ }
 void open_selected_file() {
@@ -295,7 +375,8 @@ void render_app() {
     const auto bg=dark_theme?rgb565(11,16,29):rgb565(235,241,247);
     const auto ink=dark_theme?white:rgb565(20,30,45);
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
-    draw_text("MCAI-OS",8,7,1,accent); draw_text(kApps[active_app],100,7,1,ink);
+    draw_text("MCAI-OS",8,7,1,accent);
+    if(active_app==13)draw_text(package_title,100,7,1,ink);else draw_text(kApps[active_app],100,7,1,ink);
     fill_rect(0,19,kWidth,1,rgb565(44,59,78));
     char line[64];
     switch(active_app) {
@@ -342,6 +423,11 @@ void render_app() {
         draw_text(keyboard_ready?"KEYBOARD PASS":"KEYBOARD FAIL",8,30,1,ink);draw_text(sd_ready?"SD MOUNT PASS":"SD MOUNT FAIL",8,48,1,ink);
         std::snprintf(line,sizeof(line),"FREE HEAP %lu",(unsigned long)esp_get_free_heap_size());draw_text(line,8,66,1,ink);
         std::snprintf(line,sizeof(line),"UPTIME %lu SEC",(unsigned long)(esp_timer_get_time()/1000000));draw_text(line,8,84,1,ink);break;
+    case 13: {
+        char count[32];std::snprintf(count,sizeof(count),"%d",package_counter);
+        draw_text(package_subtitle,8,30,1,muted);draw_text(count,8,55,3,accent);
+        draw_text("ENTER: +1",8,94,1,ink);draw_text("BACKSPACE: STORE",8,111,1,muted);break;
+    }
     case 11:
         draw_text("SNAKE - WASD TO MOVE",8,25,1,accent);
         if(!game_started){draw_text("ENTER TO START",8,58,1,ink);draw_text("EAT FOOD / AVOID WALLS",8,78,1,muted);}
@@ -357,8 +443,7 @@ void render_app() {
 void render_home() {
     const auto bg=rgb565(11,16,29), card=rgb565(22,31,49), accent=rgb565(87,231,190);
     const auto white=rgb565(244,248,255), muted=rgb565(150,166,190), selected=rgb565(37,68,75);
-    if(active_app>=0) { render_app(); return; }
-    std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
+    if(active_app>=0) { render_app(); return; }    std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
     fill_rect(0,0,kWidth,3,accent); draw_text("MCAI-OS",8,7,2,accent);
     draw_text(sd_ready?"SD READY":"NO SD",158,12,1,sd_ready?accent:muted);
     draw_text("APP LAUNCHER",8,29,1,muted);
@@ -498,7 +583,14 @@ void poll_keyboard() {
             if(key==65)active_app=-1;
             else if(key==53||key==44){if(store_selected>0)--store_selected;if(store_selected<store_scroll)store_scroll=store_selected;}
             else if(key==48||key==54){if(store_selected+1<store_count)++store_selected;if(store_selected>=store_scroll+4)store_scroll=store_selected-3;}
-            else if(key==67)install_store_package();
+            else if(key==67){
+                if(package_installed(store_ids[store_selected])) {
+                    if(!launch_installed_package(store_ids[store_selected]))std::snprintf(store_message,sizeof(store_message),"APP LOAD FAILED");
+                } else install_store_package();
+            }
+        } else if(active_app==13){
+            if(key==65){package_running=false;active_app=5;}
+            else if(key==67){package_counter=std::min(999999,package_counter+package_increment);}
         } else if(active_app==6){
             if(key==65){if(clock_len>0)clock_input[--clock_len]=0;else active_app=-1;}
             else if(ch>='0'&&ch<='9'&&clock_len<6){clock_input[clock_len++]=ch;clock_input[clock_len]=0;}
@@ -538,17 +630,3 @@ extern "C" void app_main(void) {
         }
         boot_button_was_pressed=boot_pressed;
         const std::int64_t now=esp_timer_get_time();
-        if(timer_running&&now>=timer_end_us){timer_running=false;timer_seconds=0;}
-        if(active_app==11&&game_started&&!game_over&&now-game_tick_us>220000){
-            game_tick_us=now;
-            for(int i=snake_len-1;i>0;i--){snake_x[i]=snake_x[i-1];snake_y[i]=snake_y[i-1];}
-            snake_x[0]+=snake_dx;snake_y[0]+=snake_dy;
-            if(snake_x[0]<0||snake_x[0]>=23||snake_y[0]<0||snake_y[0]>=9)game_over=true;
-            for(int i=1;i<snake_len;i++)if(snake_x[0]==snake_x[i]&&snake_y[0]==snake_y[i])game_over=true;
-            if(snake_x[0]==food_x&&snake_y[0]==food_y){if(snake_len<47)++snake_len;++game_score;food_x=(food_x+7)%23;food_y=(food_y+3)%9;}
-        }
-        if(old_app!=active_app||old_sel!=selected_app||active_app==6||active_app==7||active_app==11||active_app==0||active_app==5||active_app==8)render_home();
-        if(active_app==1&&note_length>0&&note_length%24==0)save_note();
-        vTaskDelay(pdMS_TO_TICKS(60));
-    }
-}
