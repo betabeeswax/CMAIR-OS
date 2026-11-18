@@ -10,6 +10,9 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_sntp.h"
+#include "esp_bt.h"
+#include "esp_bt_main.h"
+#include "esp_gap_ble_api.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "nvs_flash.h"
@@ -75,6 +78,9 @@ int wifi_setup_step=0;
 char wifi_ssid_input[33]={};
 char wifi_password_input[65]={};
 int wifi_input_length=0;
+bool bluetooth_screen=false, ble_ready=false, ble_scan_active=false;
+int ble_device_count=0, ble_device_scroll=0;
+char ble_devices[12][32]={};
 char calc_buffer[48] = {};
 int calc_length = 0;
 int file_scroll = 0;
@@ -286,6 +292,65 @@ esp_err_t catalogue_http_event(esp_http_client_event_t* evt) {
     }
     return ESP_OK;
 }
+void ble_gap_event(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param) {
+    if(event==ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT) {
+        if(param->scan_param_cmpl.status==ESP_BT_STATUS_SUCCESS) {
+            ble_scan_active=true;
+            esp_ble_gap_start_scanning(12);
+        }
+    } else if(event==ESP_GAP_BLE_SCAN_RESULT_EVT) {
+        if(param->scan_rst.search_evt==ESP_GAP_SEARCH_INQ_RES_EVT && ble_device_count<12) {
+            char label[32]={};
+            std::uint8_t name_len=0;
+            std::uint8_t* name=esp_ble_resolve_adv_data(param->scan_rst.ble_adv,ESP_BLE_AD_TYPE_NAME_CMPL,&name_len);
+            if(name&&name_len) {
+                const size_t n=std::min((size_t)name_len,sizeof(label)-1);
+                std::memcpy(label,name,n); label[n]=0;
+            } else {
+                std::snprintf(label,sizeof(label),"%02X:%02X:%02X:%02X:%02X:%02X",
+                    param->scan_rst.bda[0],param->scan_rst.bda[1],param->scan_rst.bda[2],
+                    param->scan_rst.bda[3],param->scan_rst.bda[4],param->scan_rst.bda[5]);
+            }
+            bool duplicate=false;
+            for(int i=0;i<ble_device_count;i++)if(std::strcmp(ble_devices[i],label)==0)duplicate=true;
+            if(!duplicate)std::snprintf(ble_devices[ble_device_count++],sizeof(ble_devices[0]),"%.31s",label);
+        } else if(param->scan_rst.search_evt==ESP_GAP_SEARCH_INQ_CMPL_EVT) {
+            ble_scan_active=false;
+        }
+    } else if(event==ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT) {
+        ble_scan_active=false;
+    }
+}
+bool start_ble_scan() {
+    if(!ble_ready) {
+        esp_err_t e=esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+        if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
+        esp_bt_controller_config_t cfg=BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+        e=esp_bt_controller_init(&cfg);
+        if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
+        e=esp_bt_controller_enable(ESP_BT_MODE_BLE);
+        if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
+        e=esp_bluedroid_init();
+        if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
+        e=esp_bluedroid_enable();
+        if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
+        if(esp_ble_gap_register_callback(ble_gap_event)!=ESP_OK)return false;
+        ble_ready=true;
+    }
+    ble_device_count=0;ble_device_scroll=0;
+    esp_ble_scan_params_t params={};
+    params.scan_type=BLE_SCAN_TYPE_ACTIVE;
+    params.own_addr_type=BLE_ADDR_TYPE_PUBLIC;
+    params.scan_filter_policy=BLE_SCAN_FILTER_ALLOW_ALL;
+    params.scan_interval=0x50;
+    params.scan_window=0x30;
+    params.scan_duplicate=BLE_SCAN_DUPLICATE_DISABLE;
+    return esp_ble_gap_set_scan_params(&params)==ESP_OK;
+}
+void stop_ble_scan() {
+    if(ble_ready&&ble_scan_active)esp_ble_gap_stop_scanning();
+    ble_scan_active=false;
+}
 void start_time_sync() {
     setenv("TZ","EST5EDT,M3.2.0/2,M11.1.0/2",1);
     tzset();
@@ -495,7 +560,13 @@ void render_app() {
         draw_text("CALCULATOR",8,27,1,accent);draw_text(calc_buffer,8,49,2,ink);
         draw_text("NUMBERS + - * / ( )",8,88,1,muted);draw_text("ENTER = RESULT",8,105,1,muted);break;
     case 3:
-        if(wifi_setup_step==1||wifi_setup_step==2){
+        if(bluetooth_screen){
+            draw_text("BLUETOOTH SCAN",8,25,1,accent);
+            draw_text(ble_scan_active?"SCANNING...":"SCAN COMPLETE",8,39,1,muted);
+            for(int i=0;i<5;i++){int ix=ble_device_scroll+i;if(ix>=ble_device_count)break;draw_text(ble_devices[ix],10,55+i*12,1,ix==ble_device_scroll?accent:ink);}
+            if(ble_device_count==0)draw_text("NO DEVICES FOUND YET",8,68,1,ink);
+            draw_text("ENTER RESCAN  ESC BACK",8,119,1,muted);
+        } else if(wifi_setup_step==1||wifi_setup_step==2){
             draw_text(wifi_setup_step==1?"WIFI NETWORK NAME":"WIFI PASSWORD",8,29,1,accent);
             if(wifi_setup_step==1)draw_text(wifi_ssid_input,8,52,1,ink);
             else {char hidden[65]={};for(int i=0;i<(int)std::strlen(wifi_password_input)&&i<64;i++)hidden[i]='*';draw_text(hidden,8,52,1,ink);}
@@ -734,7 +805,12 @@ void poll_keyboard() {
             else if(key==KEY_ENTER)calculate();
             else if(ch>=32&&ch<127&&calc_length<(int)sizeof(calc_buffer)-2){calc_buffer[calc_length++]=ch;calc_buffer[calc_length]=0;}
         } else if(active_app==3){
-            if(wifi_setup_step>0){
+            if(bluetooth_screen){
+                if(key==KEY_ESC||key==KEY_BACKSPACE){stop_ble_scan();bluetooth_screen=false;}
+                else if(key==KEY_ENTER){stop_ble_scan();start_ble_scan();}
+                else if(is_up(key)){ble_device_scroll=std::max(0,ble_device_scroll-1);}
+                else if(is_down(key)){ble_device_scroll=std::min(std::max(0,ble_device_count-5),ble_device_scroll+1);}
+            } else if(wifi_setup_step>0){
                 if(key==KEY_ESC){wifi_setup_step=0;}
                 else if(key==KEY_BACKSPACE){
                     if(wifi_setup_step==1&&std::strlen(wifi_ssid_input)>0)wifi_ssid_input[std::strlen(wifi_ssid_input)-1]=0;
@@ -759,7 +835,7 @@ void poll_keyboard() {
             } else if(key==KEY_ENTER){
                 if(settings_selection==1){dark_theme=!dark_theme;save_settings();}
                 else if(settings_selection==2){load_wifi_settings();wifi_setup_step=1;}
-                else if(settings_selection==3){std::snprintf(store_message,sizeof(store_message),"BLE SETUP NOT READY");}
+                else if(settings_selection==3){bluetooth_screen=true;if(!start_ble_scan())std::snprintf(store_message,sizeof(store_message),"BLE START FAILED");}
             } else if(key==KEY_ESC)active_app=-1;
         } else if(active_app==5){
             if(is_back(key))active_app=-1;
