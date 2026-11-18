@@ -620,7 +620,7 @@ void poll_keyboard() {
             else if(ch=='d'&&snake_dx==0){snake_dx=1;snake_dy=0;}
             else if(game_over&&key==67)game_started=false;
         }
-        if(key==65&&active_app!=0&&active_app!=1&&active_app!=2&&active_app!=6&&active_app!=11)active_app=-1;
+        if(key==65&&active_app!=0&&active_app!=1&&active_app!=2&&active_app!=5&&active_app!=6&&active_app!=11)active_app=-1;
     }
     std::uint8_t status=0;if(keyboard_read(0x02,&status)==ESP_OK&&(status&0x01))keyboard_write(0x02,0x01);
 }} // namespace
