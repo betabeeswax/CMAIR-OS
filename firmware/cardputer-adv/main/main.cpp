@@ -16,6 +16,10 @@
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <cstdio>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <ctime>
 
 namespace {
 constexpr char kTag[] = "MCAI-OS";
@@ -40,8 +44,12 @@ bool keyboard_ready = false;
 bool sd_ready = false;
 int selected_app = 0;
 int active_app = -1;
+int setting_brightness = 1;
+int calc_value = 0;
+int file_scroll = 0;
 bool boot_button_was_pressed = false;
-constexpr const char* kApps[] = {"FILE MANAGER", "NOTES", "CALCULATOR", "SETTINGS", "SYSTEM INFO"};
+constexpr int kAppsPerPage = 5;
+constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT"};
 constexpr int kAppCount = sizeof(kApps) / sizeof(kApps[0]);
 alignas(4) std::uint16_t framebuffer[kWidth * kHeight];
 
@@ -98,30 +106,79 @@ void draw_text(const char* text, int x, int y, int scale, std::uint16_t color) {
     }
 }
 
+void render_app() {
+    const auto white=rgb565(244,248,255), muted=rgb565(150,166,190), accent=rgb565(87,231,190);
+    std::fill(std::begin(framebuffer),std::end(framebuffer),rgb565(11,16,29));
+    draw_text("MCAI-OS",8,7,1,accent); draw_text(kApps[active_app],100,7,1,white);
+    fill_rect(0,19,kWidth,1,rgb565(44,59,78));
+    if(active_app==0) {
+        draw_text("SD CARD FILES",8,27,1,accent);
+        if(!sd_ready) draw_text("INSERT SD CARD",8,50,1,white);
+        else {
+            DIR* dir=opendir(kSdMountPoint);
+            if(!dir) draw_text("CANNOT OPEN SD ROOT",8,50,1,white);
+            else { struct dirent* ent; int row=0, seen=0;
+                while((ent=readdir(dir))!=nullptr) { if(ent->d_name[0]=='.') continue; if(seen++<file_scroll) continue; if(row>=5) break; draw_text(ent->d_name,8,40+row*14,1,white); ++row; }
+                if(row==0) draw_text("SD CARD IS EMPTY",8,50,1,white); closedir(dir); }
+        }
+        draw_text("UP/DOWN SCROLL",8,111,1,muted);
+    } else if(active_app==1) {
+        draw_text("NOTES",8,29,1,accent);
+        if(!sd_ready) draw_text("SD CARD NEEDED TO SAVE",8,54,1,white);
+        else { draw_text("SAVES TO:",8,49,1,muted); draw_text("/sdcard/MCAI-OS/notes",8,64,1,white); draw_text("ENTER CREATES A NOTE",8,88,1,accent); }
+    } else if(active_app==2) {
+        draw_text("SIMPLE CALCULATOR",8,30,1,accent);
+        char n[24]; std::snprintf(n,sizeof(n),"%d",calc_value); draw_text(n,8,55,3,white);
+        draw_text("UP +1   DOWN -1",8,91,1,muted); draw_text("ENTER RESET",8,105,1,muted);
+    } else if(active_app==3) {
+        draw_text("DEVICE SETTINGS",8,28,1,accent); draw_text("DISPLAY BRIGHTNESS",8,48,1,white);
+        draw_text(setting_brightness==0?"LOW":setting_brightness==1?"MEDIUM":"HIGH",8,68,2,accent);
+        draw_text("UP/DOWN TO CHANGE",8,98,1,muted);
+    } else if(active_app==4) {
+        draw_text("BOARD: CARDPUTER ADV",8,30,1,white); draw_text("CPU: ESP32-S3",8,46,1,white);
+        draw_text("DISPLAY: 240 X 135",8,62,1,white); draw_text(keyboard_ready?"KEYBOARD: READY":"KEYBOARD: MISSING",8,78,1,white);
+        draw_text(sd_ready?"MICROSD: MOUNTED":"MICROSD: NOT MOUNTED",8,94,1,white);
+    } else if(active_app==5) {
+        draw_text("APP STORE",8,29,1,accent); draw_text("APP CATALOGUE: 106 IDEAS",8,49,1,white);
+        draw_text("INSTALLER NEEDS PACKAGE",8,67,1,white); draw_text("FORMAT + SIGNATURE SUPPORT",8,83,1,muted);
+        draw_text("NOT CLAIMING FAKE INSTALLS",8,101,1,accent);
+    } else if(active_app==6) {
+        const std::time_t now=std::time(nullptr); std::tm tmv{}; localtime_r(&now,&tmv); char t[16];
+        std::snprintf(t,sizeof(t),"%02d:%02d:%02d",tmv.tm_hour,tmv.tm_min,tmv.tm_sec);
+        draw_text("DEVICE CLOCK",8,32,1,accent); draw_text(t,8,56,3,white);
+        if(tmv.tm_year<120) draw_text("TIME NOT SET",8,101,1,muted);
+    } else if(active_app==7) {
+        draw_text("TIMER",8,32,2,accent); draw_text("TIMER SERVICE NOT READY",8,75,1,muted);
+    } else if(active_app==8) {
+        draw_text("PRESS KEYS TO TEST",8,35,1,accent); draw_text("ARROWS + ENTER",8,61,1,white);
+    } else if(active_app==9) {
+        draw_text(sd_ready?"MICROSD: READY":"MICROSD: NOT FOUND",8,40,1,white);
+        draw_text("NO FORMAT OR ERASE ACTION",8,64,1,muted);
+    } else if(active_app==10) {
+        draw_text(keyboard_ready?"KEYPAD: PASS":"KEYPAD: FAIL",8,40,1,white);
+        draw_text(sd_ready?"SD MOUNT: PASS":"SD MOUNT: FAIL",8,58,1,white);
+        draw_text("DISPLAY: INITIALIZED",8,76,1,white);
+    } else if(active_app==11) {
+        draw_text("GAMES",8,35,2,accent); draw_text("NO GAMES INSTALLED YET",8,72,1,muted);
+    } else { draw_text("MCAI-OS CARDPUTER ADV",8,38,1,white); draw_text("VERSION 0.1.0 ALPHA",8,58,1,accent); }
+    fill_rect(0,122,kWidth,1,rgb565(44,59,78)); draw_text("BACKSPACE: HOME",8,126,1,muted);
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
+}
+
 void render_home() {
-    const auto bg = rgb565(11,16,29), card = rgb565(22,31,49);
-    const auto accent = rgb565(87,231,190), white = rgb565(244,248,255);
-    const auto muted = rgb565(150,166,190), selected = rgb565(37,68,75);
-    std::fill(std::begin(framebuffer), std::end(framebuffer), bg);
-    fill_rect(0,0,kWidth,3,accent);
-    draw_text("MCAI-OS",10,9,2,accent);
-    draw_text(sd_ready ? "SD READY" : "NO SD",151,14,1,sd_ready?accent:muted);
-    if (active_app >= 0) {
-        draw_text("APP",10,38,1,muted);
-        draw_text(kApps[active_app],10,58,2,white);
-        draw_text("NOT READY YET",10,88,1,accent);
-        draw_text("PRESS BACK TO RETURN",10,112,1,muted);
-        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
-        return;
-    }
-    draw_text("HOME",10,34,1,muted);
-    for (int i=0;i<kAppCount;i++) {
-        const int y=47+i*16;
-        fill_rect(8,y,224,14,i==selected_app?selected:card);
-        if(i==selected_app) fill_rect(8,y,3,14,accent);
-        draw_text(kApps[i],16,y+4,1,i==selected_app?accent:white);
-    }
-    draw_text(keyboard_ready ? "ARROWS MOVE  ENTER SELECT" : "KEYBOARD NOT FOUND",10,129,1,muted);
+    const auto bg=rgb565(11,16,29), card=rgb565(22,31,49), accent=rgb565(87,231,190);
+    const auto white=rgb565(244,248,255), muted=rgb565(150,166,190), selected=rgb565(37,68,75);
+    if(active_app>=0) { render_app(); return; }
+    std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
+    fill_rect(0,0,kWidth,3,accent); draw_text("MCAI-OS",8,7,2,accent);
+    draw_text(sd_ready?"SD READY":"NO SD",158,12,1,sd_ready?accent:muted);
+    draw_text("APP LAUNCHER",8,29,1,muted);
+    const int page=selected_app/kAppsPerPage, pages=(kAppCount+kAppsPerPage-1)/kAppsPerPage;
+    for(int row=0;row<kAppsPerPage;row++) { const int i=page*kAppsPerPage+row; if(i>=kAppCount) break;
+        const int y=43+row*15; fill_rect(7,y,226,13,i==selected_app?selected:card);
+        if(i==selected_app) fill_rect(7,y,3,13,accent); draw_text(kApps[i],15,y+3,1,i==selected_app?accent:white); }
+    char p[20]; std::snprintf(p,sizeof(p),"PAGE %d/%d",page+1,pages); draw_text(p,8,122,1,accent);
+    draw_text("UP/DOWN MOVE ENTER OPEN",85,122,1,muted);
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
 }
 
@@ -217,15 +274,16 @@ void poll_keyboard() {
         // ADV matrix values are decimal row/column scan codes, not hex key IDs.
         // Cardputer navigation keys from the ADV 4x14 matrix: comma=44, semicolon=53, period=48, slash=54.
         if(active_app >= 0) {
-            if(key == 65 || key == 67) active_app = -1; // Backspace or Enter returns to launcher.
-        } else if(key == 53 || key == 44) {
-            selected_app = (selected_app + kAppCount - 1) % kAppCount;
-        } else if(key == 48 || key == 54) {
-            selected_app = (selected_app + 1) % kAppCount;
-        } else if(key == 67) {
-            active_app = selected_app;
-            ESP_LOGI(kTag, "Opened menu item: %s", kApps[selected_app]);
-        }
+            if(key==65) { active_app=-1; file_scroll=0; }
+            else if(key==53 || key==44) { if(active_app==0 && file_scroll>0) --file_scroll; else if(active_app==2) --calc_value; else if(active_app==3 && setting_brightness>0) --setting_brightness; }
+            else if(key==48 || key==54) { if(active_app==0) ++file_scroll; else if(active_app==2) ++calc_value; else if(active_app==3 && setting_brightness<2) ++setting_brightness; }
+            else if(key==67) {
+                if(active_app==2) calc_value=0;
+                else if(active_app==1 && sd_ready) { mkdir("/sdcard/MCAI-OS",0775); mkdir("/sdcard/MCAI-OS/notes",0775); FILE* note=std::fopen("/sdcard/MCAI-OS/notes/Welcome.txt","a"); if(note) { std::fputs("Welcome to MCAI-OS notes.\\n",note); std::fclose(note); } }
+            }
+        } else if(key==53 || key==44) selected_app=(selected_app+kAppCount-1)%kAppCount;
+        else if(key==48 || key==54) selected_app=(selected_app+1)%kAppCount;
+        else if(key==67) { active_app=selected_app; ESP_LOGI(kTag,"Opened app: %s",kApps[selected_app]); }
     }
     std::uint8_t status=0;
     if(keyboard_read(0x02,&status)==ESP_OK && (status&0x01)) keyboard_write(0x02,0x01);
