@@ -70,6 +70,11 @@ bool sd_ready = false;
 int selected_app = 0;
 int active_app = -1;
 int setting_brightness = 1;
+int settings_selection=0;
+int wifi_setup_step=0;
+char wifi_ssid_input[33]={};
+char wifi_password_input[65]={};
+int wifi_input_length=0;
 char calc_buffer[48] = {};
 int calc_length = 0;
 int file_scroll = 0;
@@ -170,6 +175,25 @@ void apply_brightness() {
     const std::uint32_t duty = brightness << 1;
     ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_7, duty));
     ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_7));
+}
+void load_wifi_settings() {
+    wifi_ssid_input[0]=0; wifi_password_input[0]=0;
+    if(!sd_ready)return;
+    FILE* f=std::fopen("/sdcard/MCAI-OS/wifi.cfg","r");
+    if(!f)return;
+    std::fgets(wifi_ssid_input,sizeof(wifi_ssid_input),f);
+    std::fgets(wifi_password_input,sizeof(wifi_password_input),f);
+    std::fclose(f);
+    auto trim=[](char* v){size_t n=std::strlen(v);while(n&&(v[n-1]=='\\n'||v[n-1]=='\\r'))v[--n]=0;};
+    trim(wifi_ssid_input);trim(wifi_password_input);
+}
+bool save_wifi_settings() {
+    if(!sd_ready)return false;
+    mkdir("/sdcard/MCAI-OS",0775);
+    FILE* f=std::fopen("/sdcard/MCAI-OS/wifi.cfg","w");
+    if(!f)return false;
+    std::fprintf(f,"%s\\n%s\\n",wifi_ssid_input,wifi_password_input);
+    return std::fclose(f)==0;
 }
 void save_settings() {
     if(!sd_ready) return;
@@ -471,8 +495,27 @@ void render_app() {
         draw_text("CALCULATOR",8,27,1,accent);draw_text(calc_buffer,8,49,2,ink);
         draw_text("NUMBERS + - * / ( )",8,88,1,muted);draw_text("ENTER = RESULT",8,105,1,muted);break;
     case 3:
-        draw_text("DISPLAY BRIGHTNESS",8,28,1,ink);draw_text(setting_brightness==0?"LOW":setting_brightness==1?"MEDIUM":"HIGH",8,48,2,accent);
-        draw_text("THEME",8,82,1,ink);draw_text(dark_theme?"DARK":"LIGHT",8,99,1,accent);draw_text("ARROWS CHANGE ENTER THEME",8,116,1,muted);break;
+        if(wifi_setup_step==1||wifi_setup_step==2){
+            draw_text(wifi_setup_step==1?"WIFI NETWORK NAME":"WIFI PASSWORD",8,29,1,accent);
+            if(wifi_setup_step==1)draw_text(wifi_ssid_input,8,52,1,ink);
+            else {char hidden[65]={};for(int i=0;i<(int)std::strlen(wifi_password_input)&&i<64;i++)hidden[i]='*';draw_text(hidden,8,52,1,ink);}
+            draw_text("TYPE USING KEYBOARD",8,78,1,muted);
+            draw_text(wifi_setup_step==1?"ENTER: NEXT":"ENTER: SAVE AND CONNECT",8,98,1,muted);
+            draw_text("ESC: CANCEL  BKSP: DELETE",8,116,1,muted);
+        } else {
+            draw_text("SETTINGS",8,25,1,accent);
+            const char* rows[]={"BRIGHTNESS","THEME","WI-FI SETUP","BLUETOOTH"};
+            for(int i=0;i<4;i++){
+                char item[40];
+                if(i==0)std::snprintf(item,sizeof(item),"BRIGHTNESS: %s",setting_brightness==0?"LOW":setting_brightness==1?"MED":"HIGH");
+                else if(i==1)std::snprintf(item,sizeof(item),"THEME: %s",dark_theme?"DARK":"LIGHT");
+                else std::snprintf(item,sizeof(item),"%s",rows[i]);
+                draw_text(item,12,43+i*15,1,i==settings_selection?accent:ink);
+            }
+            draw_text("UP/DOWN SELECT  LEFT/RIGHT CHANGE",8,111,1,muted);
+            draw_text("ENTER OPEN  ESC BACK",8,123,1,muted);
+        }
+        break;
     case 4:
         std::snprintf(line,sizeof(line),"CPU ESP32-S3");draw_text(line,8,30,1,ink);
         std::snprintf(line,sizeof(line),"UPTIME %lu SEC",(unsigned long)(esp_timer_get_time()/1000000));draw_text(line,8,48,1,ink);
@@ -691,9 +734,33 @@ void poll_keyboard() {
             else if(key==KEY_ENTER)calculate();
             else if(ch>=32&&ch<127&&calc_length<(int)sizeof(calc_buffer)-2){calc_buffer[calc_length++]=ch;calc_buffer[calc_length]=0;}
         } else if(active_app==3){
-            if(is_up(key)||is_left(key)){setting_brightness=std::max(0,setting_brightness-1);apply_brightness();save_settings();}
-            else if(is_down(key)||is_right(key)){setting_brightness=std::min(2,setting_brightness+1);apply_brightness();save_settings();}
-            else if(key==KEY_ENTER){dark_theme=!dark_theme;save_settings();}
+            if(wifi_setup_step>0){
+                if(key==KEY_ESC){wifi_setup_step=0;}
+                else if(key==KEY_BACKSPACE){
+                    if(wifi_setup_step==1&&std::strlen(wifi_ssid_input)>0)wifi_ssid_input[std::strlen(wifi_ssid_input)-1]=0;
+                    else if(wifi_setup_step==2&&std::strlen(wifi_password_input)>0)wifi_password_input[std::strlen(wifi_password_input)-1]=0;
+                } else if(key==KEY_ENTER){
+                    if(wifi_setup_step==1){wifi_setup_step=2;}
+                    else {
+                        if(save_wifi_settings()){
+                            wifi_setup_step=0;
+                            if(connect_wifi_from_sd())start_time_sync();
+                            std::snprintf(store_message,sizeof(store_message),"WIFI SETTINGS SAVED");
+                        } else std::snprintf(store_message,sizeof(store_message),"WIFI SAVE FAILED");
+                    }
+                } else if(ch>=32&&ch<127){
+                    if(wifi_setup_step==1&&std::strlen(wifi_ssid_input)<32){size_t n=std::strlen(wifi_ssid_input);wifi_ssid_input[n]=ch;wifi_ssid_input[n+1]=0;}
+                    else if(wifi_setup_step==2&&std::strlen(wifi_password_input)<64){size_t n=std::strlen(wifi_password_input);wifi_password_input[n]=ch;wifi_password_input[n+1]=0;}
+                }
+            } else if(is_up(key)||is_down(key)){settings_selection=(settings_selection+(is_up(key)?3:1))%4;}
+            else if(is_left(key)||is_right(key)){
+                if(settings_selection==0){setting_brightness=std::max(0,std::min(2,setting_brightness+(is_right(key)?1:-1)));apply_brightness();save_settings();}
+                else if(settings_selection==1){dark_theme=!dark_theme;save_settings();}
+            } else if(key==KEY_ENTER){
+                if(settings_selection==1){dark_theme=!dark_theme;save_settings();}
+                else if(settings_selection==2){load_wifi_settings();wifi_setup_step=1;}
+                else if(settings_selection==3){std::snprintf(store_message,sizeof(store_message),"BLE SETUP NOT READY");}
+            } else if(key==KEY_ESC)active_app=-1;
         } else if(active_app==5){
             if(is_back(key))active_app=-1;
             else if(is_up(key)||is_left(key)){if(store_selected>0)--store_selected;if(store_selected<store_scroll)store_scroll=store_selected;}
