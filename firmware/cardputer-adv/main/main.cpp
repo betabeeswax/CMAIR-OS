@@ -1,8 +1,11 @@
 #include "driver/gpio.h"
+#include "driver/ledc.h"
 #include "driver/i2c.h"
 #include "driver/spi_master.h"
 #include "driver/sdspi_host.h"
 #include "esp_err.h"
+#include "esp_timer.h"
+#include "esp_system.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
@@ -20,6 +23,10 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <ctime>
+#include <cstdlib>
+#include <cmath>
+#include <sys/statvfs.h>
+#include <sys/time.h>
 
 namespace {
 constexpr char kTag[] = "MCAI-OS";
@@ -47,10 +54,31 @@ int active_app = -1;
 int setting_brightness = 1;
 int calc_value = 0;
 int file_scroll = 0;
-char note_buffer[160] = {};
-int note_length = 0;
+char note_buffer[512] = {};
+int note_length = 0, note_scroll = 0;
 char last_char = '-';
 unsigned keypress_count = 0;
+char current_dir[160] = "/sdcard";
+char file_names[32][64] = {};
+bool file_is_dir[32] = {};
+int file_count = 0, file_selected = 0;
+char viewer_buffer[700] = {};
+bool viewing_file = false;
+char store_names[24][64] = {};
+int store_count = 0, store_selected = 0;
+bool store_installed = false;
+char store_message[40] = "PRESS ENTER TO INSTALL";
+char clock_input[8] = {};
+int clock_len = 0;
+int timer_seconds = 60;
+bool timer_running = false;
+std::int64_t timer_end_us = 0;
+bool game_started = false;
+int snake_x[48] = {}, snake_y[48] = {}, snake_len = 3, snake_dx = 1, snake_dy = 0;
+int food_x = 12, food_y = 4, game_score = 0;
+std::int64_t game_tick_us = 0;
+bool game_over = false;
+bool dark_theme = true;
 bool boot_button_was_pressed = false;
 constexpr int kAppsPerPage = 5;
 constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT"};
@@ -110,62 +138,164 @@ void draw_text(const char* text, int x, int y, int scale, std::uint16_t color) {
     }
 }
 
+void apply_brightness() {
+    const std::uint32_t duty = setting_brightness==0 ? 900U : setting_brightness==1 ? 4096U : 8191U;
+    ledc_set_duty(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0,duty);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0);
+}
+void save_settings() {
+    if(!sd_ready) return;
+    mkdir("/sdcard/MCAI-OS",0775);
+    FILE* f=std::fopen("/sdcard/MCAI-OS/settings.cfg","w");
+    if(f){std::fprintf(f,"%d %d\n",setting_brightness,dark_theme?1:0);std::fclose(f);}
+}
+void load_settings() {
+    if(!sd_ready) return;
+    FILE* f=std::fopen("/sdcard/MCAI-OS/settings.cfg","r");
+    if(f){int b=1,t=1;if(std::fscanf(f,"%d %d",&b,&t)>=1){setting_brightness=std::max(0,std::min(2,b));dark_theme=t!=0;}std::fclose(f);}
+}
+void save_note() {
+    if(!sd_ready) return;
+    mkdir("/sdcard/MCAI-OS",0775);
+    FILE* f=std::fopen("/sdcard/MCAI-OS/notes.txt","w");
+    if(f){std::fwrite(note_buffer,1,note_length,f);std::fclose(f);}
+}
+void load_note() {
+    note_length=0; note_buffer[0]=0;
+    if(!sd_ready) return;
+    FILE* f=std::fopen("/sdcard/MCAI-OS/notes.txt","r");
+    if(f){note_length=(int)std::fread(note_buffer,1,sizeof(note_buffer)-1,f);note_buffer[note_length]=0;std::fclose(f);}
+}
+bool eval_expr(const char*& p,double& out);
+bool eval_factor(const char*& p,double& out) {
+    while(*p==' ') ++p;
+    if(*p=='-'){++p;if(!eval_factor(p,out))return false;out=-out;return true;}
+    if(*p=='('){++p;if(!eval_expr(p,out))return false;while(*p==' ')++p;if(*p!=')')return false;++p;return true;}
+    char* end=nullptr;out=std::strtod(p,&end);if(end==p)return false;p=end;return std::isfinite(out);
+}
+bool eval_term(const char*& p,double& out) {
+    if(!eval_factor(p,out))return false;
+    for(;;){while(*p==' ')++p;char op=*p;if(op!='*'&&op!='/')return true;++p;double rhs=0;if(!eval_factor(p,rhs))return false;if(op=='/'&&rhs==0)return false;out=op=='*'?out*rhs:out/rhs;}
+}
+bool eval_expr(const char*& p,double& out) {
+    if(!eval_term(p,out))return false;
+    for(;;){while(*p==' ')++p;char op=*p;if(op!='+'&&op!='-')return true;++p;double rhs=0;if(!eval_term(p,rhs))return false;out=op=='+'?out+rhs:out-rhs;}
+}
+void calculate() {
+    const char* p=calc_buffer; double result=0;
+    if(!eval_expr(p,result)){std::snprintf(calc_buffer,sizeof(calc_buffer),"INVALID / DIV0");return;}
+    while(*p==' ')++p;if(*p){std::snprintf(calc_buffer,sizeof(calc_buffer),"INVALID INPUT");return;}
+    std::snprintf(calc_buffer,sizeof(calc_buffer),"%.8g",result);
+}
+void refresh_files() {
+    file_count=0; file_selected=0;
+    DIR* d=opendir(current_dir); if(!d)return;
+    struct dirent* e;
+    while((e=readdir(d))!=nullptr && file_count<32) {
+        if(e->d_name[0]=='.')continue;
+        std::snprintf(file_names[file_count],sizeof(file_names[file_count]),"%s",e->d_name);
+        char full[240];std::snprintf(full,sizeof(full),"%s/%s",current_dir,e->d_name);
+        struct stat st{};file_is_dir[file_count]=(stat(full,&st)==0 && S_ISDIR(st.st_mode));
+        ++file_count;
+    }
+    closedir(d);
+}
+void refresh_store() {
+    store_count=0;store_selected=0;store_installed=false;
+    DIR* d=opendir("/sdcard/MCAI-OS/store");if(!d)return;
+    struct dirent* e;while((e=readdir(d))!=nullptr&&store_count<24){
+        const size_t n=std::strlen(e->d_name);
+        if(n>6&&std::strcmp(e->d_name+n-6,".mcapp")==0){std::snprintf(store_names[store_count++],64,"%s",e->d_name);}
+    }closedir(d);
+}
+void install_store_package() {
+    if(!sd_ready||store_count==0)return;
+    mkdir("/sdcard/MCAI-OS/apps",0775);
+    char src[220],dst[220];std::snprintf(src,sizeof(src),"/sdcard/MCAI-OS/store/%s",store_names[store_selected]);
+    std::snprintf(dst,sizeof(dst),"/sdcard/MCAI-OS/apps/%s",store_names[store_selected]);
+    FILE* in=std::fopen(src,"r");FILE* out=std::fopen(dst,"w");
+    if(!in||!out){if(in)std::fclose(in);if(out)std::fclose(out);std::snprintf(store_message,sizeof(store_message),"INSTALL FAILED");return;}
+    char line[128];bool valid=false;while(std::fgets(line,sizeof(line),in)){if(std::strncmp(line,"name=",5)==0||std::strncmp(line,"text=",5)==0)valid=true;std::fputs(line,out);}
+    std::fclose(in);std::fclose(out);
+    std::snprintf(store_message,sizeof(store_message),valid?"INSTALLED TO SD":"BAD PACKAGE");
+    if(!valid)std::remove(dst);
+}
+void seed_store() {
+    if(!sd_ready)return;
+    mkdir("/sdcard/MCAI-OS",0775);mkdir("/sdcard/MCAI-OS/store",0775);
+    const char* path="/sdcard/MCAI-OS/store/hello.mcapp";
+    if(access(path,F_OK)!=0){FILE* f=std::fopen(path,"w");if(f){std::fputs("name=Hello App\ntext=Welcome to MCAI-OS!\naction=counter\n",f);std::fclose(f);}}
+}
+void open_selected_file() {
+    if(file_count==0)return;
+    char path[240];std::snprintf(path,sizeof(path),"%s/%s",current_dir,file_names[file_selected]);
+    if(file_is_dir[file_selected]){std::snprintf(current_dir,sizeof(current_dir),"%s",path);refresh_files();return;}
+    FILE* f=std::fopen(path,"r");if(!f)return;
+    const size_t n=std::fread(viewer_buffer,1,sizeof(viewer_buffer)-1,f);viewer_buffer[n]=0;std::fclose(f);viewing_file=true;
+}
 void render_app() {
     const auto white=rgb565(244,248,255), muted=rgb565(150,166,190), accent=rgb565(87,231,190);
-    std::fill(std::begin(framebuffer),std::end(framebuffer),rgb565(11,16,29));
-    draw_text("MCAI-OS",8,7,1,accent); draw_text(kApps[active_app],100,7,1,white);
+    const auto bg=dark_theme?rgb565(11,16,29):rgb565(235,241,247);
+    const auto ink=dark_theme?white:rgb565(20,30,45);
+    std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
+    draw_text("MCAI-OS",8,7,1,accent); draw_text(kApps[active_app],100,7,1,ink);
     fill_rect(0,19,kWidth,1,rgb565(44,59,78));
-    if(active_app==0) {
-        draw_text("SD CARD FILES",8,27,1,accent);
-        if(!sd_ready) draw_text("INSERT SD CARD",8,50,1,white);
-        else {
-            DIR* dir=opendir(kSdMountPoint);
-            if(!dir) draw_text("CANNOT OPEN SD ROOT",8,50,1,white);
-            else { struct dirent* ent; int row=0, seen=0;
-                while((ent=readdir(dir))!=nullptr) { if(ent->d_name[0]=='.') continue; if(seen++<file_scroll) continue; if(row>=5) break; draw_text(ent->d_name,8,40+row*14,1,white); ++row; }
-                if(row==0) { draw_text("SD CARD IS EMPTY",8,50,1,white); } closedir(dir); }
-        }
-        draw_text("UP/DOWN SCROLL",8,111,1,muted);
-    } else if(active_app==1) {
-        draw_text("NOTES",8,29,1,accent);
-        if(!sd_ready) draw_text("SD CARD NEEDED TO SAVE",8,54,1,white);
-        else { draw_text("SAVES TO:",8,49,1,muted); draw_text("/sdcard/MCAI-OS/notes",8,64,1,white); draw_text("ENTER CREATES A NOTE",8,88,1,accent); }
-    } else if(active_app==2) {
-        draw_text("SIMPLE CALCULATOR",8,30,1,accent);
-        char n[24]; std::snprintf(n,sizeof(n),"%d",calc_value); draw_text(n,8,55,3,white);
-        draw_text("UP +1   DOWN -1",8,91,1,muted); draw_text("ENTER RESET",8,105,1,muted);
-    } else if(active_app==3) {
-        draw_text("DEVICE SETTINGS",8,28,1,accent); draw_text("DISPLAY BRIGHTNESS",8,48,1,white);
-        draw_text(setting_brightness==0?"LOW":setting_brightness==1?"MEDIUM":"HIGH",8,68,2,accent);
-        draw_text("UP/DOWN TO CHANGE",8,98,1,muted);
-    } else if(active_app==4) {
-        draw_text("BOARD: CARDPUTER ADV",8,30,1,white); draw_text("CPU: ESP32-S3",8,46,1,white);
-        draw_text("DISPLAY: 240 X 135",8,62,1,white); draw_text(keyboard_ready?"KEYBOARD: READY":"KEYBOARD: MISSING",8,78,1,white);
-        draw_text(sd_ready?"MICROSD: MOUNTED":"MICROSD: NOT MOUNTED",8,94,1,white);
-    } else if(active_app==5) {
-        draw_text("APP STORE",8,29,1,accent); draw_text("APP CATALOGUE: 106 IDEAS",8,49,1,white);
-        draw_text("INSTALLER NEEDS PACKAGE",8,67,1,white); draw_text("FORMAT + SIGNATURE SUPPORT",8,83,1,muted);
-        draw_text("NOT CLAIMING FAKE INSTALLS",8,101,1,accent);
-    } else if(active_app==6) {
-        const std::time_t now=std::time(nullptr); std::tm tmv{}; localtime_r(&now,&tmv); char t[16];
-        std::snprintf(t,sizeof(t),"%02d:%02d:%02d",tmv.tm_hour,tmv.tm_min,tmv.tm_sec);
-        draw_text("DEVICE CLOCK",8,32,1,accent); draw_text(t,8,56,3,white);
-        if(tmv.tm_year<120) draw_text("TIME NOT SET",8,101,1,muted);
-    } else if(active_app==7) {
-        draw_text("TIMER",8,32,2,accent); draw_text("TIMER SERVICE NOT READY",8,75,1,muted);
-    } else if(active_app==8) {
-        draw_text("PRESS KEYS TO TEST",8,35,1,accent); draw_text("ARROWS + ENTER",8,61,1,white);
-    } else if(active_app==9) {
-        draw_text(sd_ready?"MICROSD: READY":"MICROSD: NOT FOUND",8,40,1,white);
-        draw_text("NO FORMAT OR ERASE ACTION",8,64,1,muted);
-    } else if(active_app==10) {
-        draw_text(keyboard_ready?"KEYPAD: PASS":"KEYPAD: FAIL",8,40,1,white);
-        draw_text(sd_ready?"SD MOUNT: PASS":"SD MOUNT: FAIL",8,58,1,white);
-        draw_text("DISPLAY: INITIALIZED",8,76,1,white);
-    } else if(active_app==11) {
-        draw_text("GAMES",8,35,2,accent); draw_text("NO GAMES INSTALLED YET",8,72,1,muted);
-    } else { draw_text("MCAI-OS CARDPUTER ADV",8,38,1,white); draw_text("VERSION 0.1.0 ALPHA",8,58,1,accent); }
-    fill_rect(0,122,kWidth,1,rgb565(44,59,78)); draw_text("BACKSPACE: HOME",8,126,1,muted);
+    char line[64];
+    switch(active_app) {
+    case 0:
+        if(viewing_file){draw_text("FILE VIEWER",8,27,1,accent);for(int i=0;i<5;i++){char row[40]={};std::strncpy(row,viewer_buffer+i*36,36);draw_text(row,8,43+i*13,1,ink);}draw_text("BACKSPACE CLOSE",8,112,1,muted);}
+        else {draw_text(current_dir,8,25,1,accent);for(int i=0;i<5;i++){int ix=file_scroll+i;if(ix>=file_count)break;std::snprintf(line,sizeof(line),"%c %.20s",file_is_dir[ix]?'>':' ',file_names[ix]);draw_text(line,8,42+i*14,1,ix==file_selected?accent:ink);}draw_text("UP/DOWN SELECT ENTER OPEN",8,112,1,muted);}
+        break;
+    case 1:
+        draw_text("NOTES - AUTO SAVES",8,25,1,accent);
+        for(int i=0;i<5;i++){int pos=(note_scroll+i)*35;if(pos>=note_length)break;char row[36]={};std::strncpy(row,note_buffer+pos,35);draw_text(row,8,43+i*13,1,ink);}
+        draw_text(sd_ready?"SAVED ON SD":"NO SD - NOT SAVED",8,112,1,muted);break;
+    case 2:
+        draw_text("CALCULATOR",8,27,1,accent);draw_text(calc_buffer,8,49,2,ink);
+        draw_text("NUMBERS + - * / ( )",8,88,1,muted);draw_text("ENTER = RESULT",8,105,1,muted);break;
+    case 3:
+        draw_text("DISPLAY BRIGHTNESS",8,28,1,ink);draw_text(setting_brightness==0?"LOW":setting_brightness==1?"MEDIUM":"HIGH",8,48,2,accent);
+        draw_text("THEME",8,82,1,ink);draw_text(dark_theme?"DARK":"LIGHT",8,99,1,accent);draw_text("ARROWS CHANGE ENTER THEME",8,116,1,muted);break;
+    case 4:
+        std::snprintf(line,sizeof(line),"CPU ESP32-S3");draw_text(line,8,30,1,ink);
+        std::snprintf(line,sizeof(line),"UPTIME %lu SEC",(unsigned long)(esp_timer_get_time()/1000000));draw_text(line,8,48,1,ink);
+        std::snprintf(line,sizeof(line),"HEAP %lu KB",(unsigned long)(esp_get_free_heap_size()/1024));draw_text(line,8,66,1,ink);
+        draw_text("M5STACK CARDPUTER ADV",8,84,1,accent);break;
+    case 5:
+        draw_text("SD PACKAGE STORE",8,25,1,accent);
+        draw_text(sd_ready?"SOURCE: SD /MCAI-OS/STORE":"INSERT SD CARD",8,41,1,ink);
+        for(int i=0;i<4;i++){int ix=store_selected+i;if(ix>=store_count)break;draw_text(store_names[ix],8,57+i*13,1,ix==store_selected?accent:ink);}
+        draw_text(store_message,8,111,1,muted);break;
+    case 6: {
+        std::time_t now=std::time(nullptr);std::tm tmv{};localtime_r(&now,&tmv);
+        if(tmv.tm_year<120){draw_text("CLOCK NOT SET",8,33,2,accent);draw_text("TYPE HHMMSS THEN ENTER",8,72,1,ink);draw_text(clock_input,8,91,2,ink);}
+        else {std::snprintf(line,sizeof(line),"%02d:%02d:%02d",tmv.tm_hour,tmv.tm_min,tmv.tm_sec);draw_text("SYSTEM CLOCK",8,30,1,accent);draw_text(line,8,55,3,ink);}
+        draw_text("ENTER SET TIME WHEN TYPED",8,111,1,muted);break;}
+    case 7: {
+        int left=timer_seconds;if(timer_running)left=(int)std::max<std::int64_t>(0,(timer_end_us-esp_timer_get_time()+999999)/1000000);
+        std::snprintf(line,sizeof(line),"%02d:%02d",left/60,left%60);draw_text("COUNTDOWN TIMER",8,27,1,accent);draw_text(line,8,49,3,ink);
+        draw_text(timer_running?"RUNNING":"PAUSED",8,91,1,muted);draw_text("UP/DOWN 10 SEC ENTER START",8,110,1,muted);break;}
+    case 8:
+        draw_text("KEYBOARD TEST",8,27,1,accent);std::snprintf(line,sizeof(line),"LAST KEY: %c",last_char);draw_text(line,8,49,1,ink);
+        std::snprintf(line,sizeof(line),"KEY EVENTS: %lu",(unsigned long)keypress_count);draw_text(line,8,69,1,ink);
+        draw_text("TYPE ANY KEY TO TEST",8,95,1,muted);break;
+    case 9: {
+        struct statvfs v{};if(sd_ready&&statvfs("/sdcard",&v)==0){unsigned long long total=(unsigned long long)v.f_blocks*v.f_frsize,freeb=(unsigned long long)v.f_bavail*v.f_frsize;
+            std::snprintf(line,sizeof(line),"TOTAL %llu MB",total/1048576);draw_text(line,8,35,1,ink);std::snprintf(line,sizeof(line),"FREE %llu MB",freeb/1048576);draw_text(line,8,54,1,ink);
+            draw_text("FILESYSTEM FAT",8,75,1,accent);}else draw_text("SD CARD NOT MOUNTED",8,43,1,ink);break;}
+    case 10:
+        draw_text(keyboard_ready?"KEYBOARD PASS":"KEYBOARD FAIL",8,30,1,ink);draw_text(sd_ready?"SD MOUNT PASS":"SD MOUNT FAIL",8,48,1,ink);
+        std::snprintf(line,sizeof(line),"FREE HEAP %lu",(unsigned long)esp_get_free_heap_size());draw_text(line,8,66,1,ink);
+        std::snprintf(line,sizeof(line),"UPTIME %lu SEC",(unsigned long)(esp_timer_get_time()/1000000));draw_text(line,8,84,1,ink);break;
+    case 11:
+        draw_text("SNAKE - WASD TO MOVE",8,25,1,accent);
+        if(!game_started){draw_text("ENTER TO START",8,58,1,ink);draw_text("EAT FOOD / AVOID WALLS",8,78,1,muted);}
+        else {for(int i=0;i<snake_len;i++)fill_rect(16+snake_x[i]*9,38+snake_y[i]*8,7,6,accent);fill_rect(16+food_x*9,38+food_y*8,7,6,rgb565(255,100,100));std::snprintf(line,sizeof(line),"SCORE %d",game_score);draw_text(line,8,116,1,ink);if(game_over)draw_text("GAME OVER - ENTER",90,116,1,accent);}
+        break;
+    default:
+        draw_text("MCAI-OS FOR CARDPUTER ADV",8,37,1,ink);draw_text("VERSION 0.2.0",8,57,1,accent);draw_text("BUILT-IN APP SUITE",8,77,1,muted);break;
+    }
+    fill_rect(0,122,kWidth,1,rgb565(44,59,78));draw_text("BACKSPACE: HOME",8,126,1,muted);
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
 }
 
@@ -275,61 +405,96 @@ char decode_key(int row, int col) {
 }
 
 void poll_keyboard() {
-    if(!keyboard_ready) return;
-    std::uint8_t count=0;
-    if(keyboard_read(0x03,&count)!=ESP_OK) return;
-    count &= 0x0F;
-    while(count--) {
-        std::uint8_t event=0;
-        if(keyboard_read(0x04,&event)!=ESP_OK || event==0) break;
-        // TCA8418 sets bit 7 for RELEASE; bit 7 clear means PRESS.
-        if((event & 0x80) == 0) continue;
-        const std::uint8_t key = event & 0x7F;
-        const int ix=(key>0)?key-1:0; const int rr=ix/10, rc=ix%10;
-        const int matrix_col=rr*2+(rc>3?1:0), matrix_row=(rc+4)%4;
-        const char ch=decode_key(matrix_row,matrix_col); if(ch) { last_char=ch; ++keypress_count; }
-        // ADV matrix values are decimal row/column scan codes, not hex key IDs.
-        // Cardputer navigation keys from the ADV 4x14 matrix: comma=44, semicolon=53, period=48, slash=54.
-        if(active_app >= 0) {
-            if(key==65) { if(active_app==1 && note_length>0) { note_buffer[--note_length]=0; } else { active_app=-1; file_scroll=0; } }
-            else if(key==53 || key==54) { if(active_app==0 && file_scroll>0) --file_scroll; else if(active_app==2) --calc_value; else if(active_app==3 && setting_brightness>0) --setting_brightness; }
-            else if(key==58 || key==64) { if(active_app==0) ++file_scroll; else if(active_app==2) ++calc_value; else if(active_app==3 && setting_brightness<2) ++setting_brightness; }
-            else if(key==67) {
-                if(active_app==2) calc_value=0;
-                else if(active_app==1 && sd_ready) { mkdir("/sdcard/MCAI-OS",0775); FILE* nf=std::fopen("/sdcard/MCAI-OS/notes.txt","w"); if(nf){std::fwrite(note_buffer,1,note_length,nf);std::fclose(nf);} }
-                else if(active_app==1 && sd_ready) { mkdir("/sdcard/MCAI-OS",0775); mkdir("/sdcard/MCAI-OS/notes",0775); FILE* note=std::fopen("/sdcard/MCAI-OS/notes/Welcome.txt","a"); if(note) { std::fputs("Welcome to MCAI-OS notes.\n",note); std::fclose(note); } }
-            }
-        } else if(key==53 || key==44) selected_app=(selected_app+kAppCount-1)%kAppCount;
-        else if(key==48 || key==54) selected_app=(selected_app+1)%kAppCount;
-        else if(key==67) { active_app=selected_app; ESP_LOGI(kTag,"Opened app: %s",kApps[selected_app]); }
+    if(!keyboard_ready)return;
+    std::uint8_t count=0;if(keyboard_read(0x03,&count)!=ESP_OK)return;count&=0x0F;
+    while(count--){
+        std::uint8_t event=0;if(keyboard_read(0x04,&event)!=ESP_OK||event==0)break;
+        if((event&0x80)==0)continue; // TCA8418: bit 7 = key press, 0 = release.
+        const std::uint8_t key=event&0x7F;
+        const int ix=key>0?key-1:0, rr=ix/10, rc=ix%10;
+        const int col=rr*2+(rc>3?1:0),row=(rc+4)%4;
+        const char ch=(row>=0&&row<4&&col>=0&&col<14)?decode_key(row,col):0;
+        last_char=ch?ch:'?';++keypress_count;
+        if(active_app<0){
+            if(key==53||key==44)selected_app=(selected_app+kAppCount-1)%kAppCount;
+            else if(key==48||key==54)selected_app=(selected_app+1)%kAppCount;
+            else if(key==67){active_app=selected_app;if(active_app==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}if(active_app==1)load_note();if(active_app==5){seed_store();refresh_store();}}
+            continue;
+        }
+        if(active_app==0){
+            if(viewing_file){if(key==65)viewing_file=false;else if(key==53||key==44)file_scroll=std::max(0,file_scroll-1);else if(key==48||key==54)++file_scroll;}
+            else if(key==65){if(std::strcmp(current_dir,"/sdcard")!=0){char* slash=std::strrchr(current_dir,'/');if(slash&&slash!=current_dir)*slash=0;else std::strcpy(current_dir,"/sdcard");refresh_files();}else active_app=-1;}
+            else if(key==53||key==44){if(file_selected>0)--file_selected;if(file_selected<file_scroll)file_scroll=file_selected;}
+            else if(key==48||key==54){if(file_selected+1<file_count)++file_selected;if(file_selected>=file_scroll+5)file_scroll=file_selected-4;}
+            else if(key==67)open_selected_file();
+        } else if(active_app==1){
+            if(key==65){if(note_length>0){--note_length;note_buffer[note_length]=0;save_note();}}
+            else if(key==67&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]='\n';note_buffer[note_length]=0;save_note();}
+            else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;save_note();}
+        } else if(active_app==2){
+            if(key==65){if(calc_length>0)calc_buffer[--calc_length]=0;}
+            else if(key==67)calculate();
+            else if(ch>=32&&ch<127&&calc_length<(int)sizeof(calc_buffer)-2){calc_buffer[calc_length++]=ch;calc_buffer[calc_length]=0;}
+        } else if(active_app==3){
+            if(key==53||key==44){setting_brightness=std::max(0,setting_brightness-1);apply_brightness();save_settings();}
+            else if(key==48||key==54){setting_brightness=std::min(2,setting_brightness+1);apply_brightness();save_settings();}
+            else if(key==67){dark_theme=!dark_theme;save_settings();}
+        } else if(active_app==5){
+            if(key==65)active_app=-1;
+            else if(key==53||key==44){if(store_selected>0)--store_selected;}
+            else if(key==48||key==54){if(store_selected+1<store_count)++store_selected;}
+            else if(key==67)install_store_package();
+        } else if(active_app==6){
+            if(key==65){if(clock_len>0)clock_input[--clock_len]=0;else active_app=-1;}
+            else if(ch>='0'&&ch<='9'&&clock_len<6){clock_input[clock_len++]=ch;clock_input[clock_len]=0;}
+            else if(key==67&&clock_len==6){int hh=(clock_input[0]-'0')*10+clock_input[1]-'0',mm=(clock_input[2]-'0')*10+clock_input[3]-'0',ss=(clock_input[4]-'0')*10+clock_input[5]-'0';if(hh<24&&mm<60&&ss<60){struct timeval tv{};tv.tv_sec=(std::time(nullptr)/86400)*86400+hh*3600+mm*60+ss;settimeofday(&tv,nullptr);clock_len=0;clock_input[0]=0;}}
+        } else if(active_app==7){
+            if(key==53||key==44){timer_seconds=std::max(0,timer_seconds-10);if(timer_running)timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;}
+            else if(key==48||key==54){timer_seconds=std::min(5999,timer_seconds+10);if(timer_running)timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;}
+            else if(key==67){if(timer_running){timer_running=false;timer_seconds=std::max(0,(int)((timer_end_us-esp_timer_get_time()+999999)/1000000));}else{timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;timer_running=true;}}
+        } else if(active_app==8){/* Every key press is counted above. */}
+        else if(active_app==11){
+            if(key==65){active_app=-1;game_started=false;}
+            else if(!game_started&&key==67){game_started=true;game_over=false;snake_len=3;snake_x[0]=10;snake_y[0]=4;snake_x[1]=9;snake_y[1]=4;snake_x[2]=8;snake_y[2]=4;snake_dx=1;snake_dy=0;food_x=14;food_y=4;game_score=0;game_tick_us=esp_timer_get_time();}
+            else if(ch=='w'&&snake_dy==0){snake_dx=0;snake_dy=-1;}
+            else if(ch=='s'&&snake_dy==0){snake_dx=0;snake_dy=1;}
+            else if(ch=='a'&&snake_dx==0){snake_dx=-1;snake_dy=0;}
+            else if(ch=='d'&&snake_dx==0){snake_dx=1;snake_dy=0;}
+            else if(game_over&&key==67)game_started=false;
+        }
+        if(key==65&&active_app!=0&&active_app!=1&&active_app!=2&&active_app!=6&&active_app!=11)active_app=-1;
     }
-    std::uint8_t status=0;
-    if(keyboard_read(0x02,&status)==ESP_OK && (status&0x01)) keyboard_write(0x02,0x01);
-}
-
-} // namespace
+    std::uint8_t status=0;if(keyboard_read(0x02,&status)==ESP_OK&&(status&0x01))keyboard_write(0x02,0x01);
+}} // namespace
 
 extern "C" void app_main(void) {
-    ESP_LOGI(kTag,"Starting MCAI-OS Cardputer ADV - keypad input enabled");
+    ESP_LOGI(kTag,"Starting MCAI-OS Cardputer ADV");
     init_display();
-    init_keyboard();
-    init_sd_card();
-    render_home();
-    for(;;) {
-        const int previous = selected_app;
-        const int previous_page = active_app;
+    ledc_timer_config_t timer={};timer.speed_mode=LEDC_LOW_SPEED_MODE;timer.duty_resolution=LEDC_TIMER_13_BIT;timer.timer_num=LEDC_TIMER_0;timer.freq_hz=5000;timer.clk_cfg=LEDC_AUTO_CLK;ESP_ERROR_CHECK(ledc_timer_config(&timer));
+    ledc_channel_config_t channel={};channel.gpio_num=kLcdBacklight;channel.speed_mode=LEDC_LOW_SPEED_MODE;channel.channel=LEDC_CHANNEL_0;channel.intr_type=LEDC_INTR_DISABLE;channel.timer_sel=LEDC_TIMER_0;channel.duty=4096;channel.hpoint=0;ESP_ERROR_CHECK(ledc_channel_config(&channel));
+    init_keyboard();init_sd_card();load_settings();load_note();seed_store();apply_brightness();render_home();
+    std::int64_t last_clock_draw=0;
+    for(;;){
+        const int old_app=active_app,old_sel=selected_app;
         poll_keyboard();
-
-        // GPIO0 is the Cardputer ADV BOOT/shoulder button and acts as Select.
-        const bool boot_pressed = gpio_get_level(GPIO_NUM_0) == 0;
-        if(boot_pressed && !boot_button_was_pressed) {
-            if(active_app==1 && sd_ready) { mkdir("/sdcard/MCAI-OS",0775); FILE* nf=std::fopen("/sdcard/MCAI-OS/notes.txt","w"); if(nf){std::fwrite(note_buffer,1,note_length,nf);std::fclose(nf);} }
-            if(active_app >= 0) active_app = -1;
-            else active_app = selected_app;
+        const bool boot_pressed=gpio_get_level(GPIO_NUM_0)==0;
+        if(boot_pressed&&!boot_button_was_pressed){
+            if(active_app>=0){if(active_app==1)save_note();active_app=-1;viewing_file=false;}
+            else {active_app=selected_app;if(active_app==0){std::strcpy(current_dir,"/sdcard");refresh_files();}if(active_app==1)load_note();if(active_app==5){seed_store();refresh_store();}}
         }
-        boot_button_was_pressed = boot_pressed;
-
-        if(previous != selected_app || previous_page != active_app) render_home();
-        vTaskDelay(pdMS_TO_TICKS(20));
+        boot_button_was_pressed=boot_pressed;
+        const std::int64_t now=esp_timer_get_time();
+        if(timer_running&&now>=timer_end_us){timer_running=false;timer_seconds=0;}
+        if(active_app==11&&game_started&&!game_over&&now-game_tick_us>220000){
+            game_tick_us=now;
+            for(int i=snake_len-1;i>0;i--){snake_x[i]=snake_x[i-1];snake_y[i]=snake_y[i-1];}
+            snake_x[0]+=snake_dx;snake_y[0]+=snake_dy;
+            if(snake_x[0]<0||snake_x[0]>=23||snake_y[0]<0||snake_y[0]>=9)game_over=true;
+            for(int i=1;i<snake_len;i++)if(snake_x[0]==snake_x[i]&&snake_y[0]==snake_y[i])game_over=true;
+            if(snake_x[0]==food_x&&snake_y[0]==food_y){if(snake_len<47)++snake_len;++game_score;food_x=(food_x+7)%23;food_y=(food_y+3)%9;}
+        }
+        if(old_app!=active_app||old_sel!=selected_app||active_app==6||active_app==7||active_app==11||active_app==0||active_app==8)render_home();
+        if(active_app==1&&note_length>0&&note_length%24==0)save_note();
+        vTaskDelay(pdMS_TO_TICKS(60));
     }
 }
