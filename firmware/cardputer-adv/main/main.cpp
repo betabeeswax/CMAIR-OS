@@ -51,6 +51,15 @@ constexpr gpio_num_t kLcdCs = GPIO_NUM_37;
 constexpr gpio_num_t kI2cSda = GPIO_NUM_8;
 constexpr gpio_num_t kI2cScl = GPIO_NUM_9;
 constexpr std::uint8_t kKeyboardAddress = 0x34;
+constexpr std::uint8_t KEY_ESC=1, KEY_FN=3, KEY_CAPS=7, KEY_UP=57, KEY_DOWN=58,
+                        KEY_LEFT=54, KEY_RIGHT=64, KEY_BACKSPACE=65, KEY_ENTER=67;
+bool caps_lock = false;
+bool fn_lock = false;
+bool is_up(std::uint8_t k){return k==KEY_UP;}
+bool is_down(std::uint8_t k){return k==KEY_DOWN;}
+bool is_left(std::uint8_t k){return k==KEY_LEFT;}
+bool is_right(std::uint8_t k){return k==KEY_RIGHT;}
+bool is_back(std::uint8_t k){return k==KEY_BACKSPACE||k==KEY_ESC;}
 constexpr char kSdMountPoint[] = "/sdcard";
 
 esp_lcd_panel_handle_t panel = nullptr;
@@ -569,63 +578,74 @@ void poll_keyboard() {
         const std::uint8_t key=event&0x7F;
         const int ix=key>0?key-1:0, rr=ix/10, rc=ix%10;
         const int col=rr*2+(rc>3?1:0),row=(rc+4)%4;
-        const char ch=(row>=0&&row<4&&col>=0&&col<14)?decode_key(row,col):0;
-        last_char=ch?ch:'?';++keypress_count;
+        char ch=(row>=0&&row<4&&col>=0&&col<14)?decode_key(row,col):0;
+        // The ADV's Aa key is Caps Lock; Fn changes the alternate key layer.
+        if(key==KEY_CAPS){caps_lock=!caps_lock;ch=0;}
+        else if(key==KEY_FN){fn_lock=!fn_lock;ch=0;}
+        if(key==KEY_UP||key==KEY_DOWN||key==KEY_LEFT||key==KEY_RIGHT||
+           key==KEY_ESC||key==KEY_BACKSPACE||key==KEY_ENTER) ch=0;
+        if(ch>='a'&&ch<='z'&&caps_lock) ch=static_cast<char>(ch-'a'+'A');
+        if(fn_lock){
+            const char* normal="1234567890-=";
+            const char* shifted="!@#$%^&*()_+";
+            for(int i=0;normal[i];++i) if(ch==normal[i]) ch=shifted[i];
+        }
+        last_char=ch?ch:(key==KEY_UP?'^':key==KEY_DOWN?'v':key==KEY_LEFT?'<':key==KEY_RIGHT?'>':'?');++keypress_count;
         if(active_app<0){
-            if(key==53||key==44)selected_app=(selected_app+kAppCount-1)%kAppCount;
-            else if(key==48||key==54)selected_app=(selected_app+1)%kAppCount;
-            else if(key==67){active_app=selected_app;if(active_app==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}if(active_app==1)load_note();if(active_app==5){refresh_store();}}
+            if(is_up(key)||is_left(key))selected_app=(selected_app+kAppCount-1)%kAppCount;
+            else if(is_down(key)||is_right(key))selected_app=(selected_app+1)%kAppCount;
+            else if(key==KEY_ENTER){active_app=selected_app;if(active_app==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}if(active_app==1)load_note();if(active_app==5){refresh_store();}}
             continue;
         }
         if(active_app==0){
-            if(viewing_file){if(key==65)viewing_file=false;else if(key==53||key==44)file_scroll=std::max(0,file_scroll-1);else if(key==48||key==54)++file_scroll;}
-            else if(key==65){if(std::strcmp(current_dir,"/sdcard")!=0){char* slash=std::strrchr(current_dir,'/');if(slash&&slash!=current_dir)*slash=0;else std::strcpy(current_dir,"/sdcard");refresh_files();}else active_app=-1;}
-            else if(key==53||key==44){if(file_selected>0)--file_selected;if(file_selected<file_scroll)file_scroll=file_selected;}
-            else if(key==48||key==54){if(file_selected+1<file_count)++file_selected;if(file_selected>=file_scroll+5)file_scroll=file_selected-4;}
-            else if(key==67)open_selected_file();
+            if(viewing_file){if(is_back(key))viewing_file=false;else if(is_up(key)||is_left(key))file_scroll=std::max(0,file_scroll-1);else if(is_down(key)||is_right(key))++file_scroll;}
+            else if(is_back(key)){if(std::strcmp(current_dir,"/sdcard")!=0){char* slash=std::strrchr(current_dir,'/');if(slash&&slash!=current_dir)*slash=0;else std::strcpy(current_dir,"/sdcard");refresh_files();}else active_app=-1;}
+            else if(is_up(key)||is_left(key)){if(file_selected>0)--file_selected;if(file_selected<file_scroll)file_scroll=file_selected;}
+            else if(is_down(key)||is_right(key)){if(file_selected+1<file_count)++file_selected;if(file_selected>=file_scroll+5)file_scroll=file_selected-4;}
+            else if(key==KEY_ENTER)open_selected_file();
         } else if(active_app==1){
-            if(key==65){if(note_length>0){--note_length;note_buffer[note_length]=0;save_note();}}
-            else if(key==67&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]='\n';note_buffer[note_length]=0;save_note();}
+            if(key==KEY_BACKSPACE){if(note_length>0){--note_length;note_buffer[note_length]=0;save_note();}}
+            else if(key==KEY_ENTER&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]='\n';note_buffer[note_length]=0;save_note();}
             else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;save_note();}
         } else if(active_app==2){
-            if(key==65){if(calc_length>0)calc_buffer[--calc_length]=0;}
-            else if(key==67)calculate();
+            if(key==KEY_BACKSPACE){if(calc_length>0)calc_buffer[--calc_length]=0;}
+            else if(key==KEY_ENTER)calculate();
             else if(ch>=32&&ch<127&&calc_length<(int)sizeof(calc_buffer)-2){calc_buffer[calc_length++]=ch;calc_buffer[calc_length]=0;}
         } else if(active_app==3){
-            if(key==53||key==44){setting_brightness=std::max(0,setting_brightness-1);apply_brightness();save_settings();}
-            else if(key==48||key==54){setting_brightness=std::min(2,setting_brightness+1);apply_brightness();save_settings();}
-            else if(key==67){dark_theme=!dark_theme;save_settings();}
+            if(is_up(key)||is_left(key)){setting_brightness=std::max(0,setting_brightness-1);apply_brightness();save_settings();}
+            else if(is_down(key)||is_right(key)){setting_brightness=std::min(2,setting_brightness+1);apply_brightness();save_settings();}
+            else if(key==KEY_ENTER){dark_theme=!dark_theme;save_settings();}
         } else if(active_app==5){
-            if(key==65)active_app=-1;
-            else if(key==53||key==44){if(store_selected>0)--store_selected;if(store_selected<store_scroll)store_scroll=store_selected;}
-            else if(key==48||key==54){if(store_selected+1<store_count)++store_selected;if(store_selected>=store_scroll+4)store_scroll=store_selected-3;}
-            else if(key==67){
+            if(is_back(key))active_app=-1;
+            else if(is_up(key)||is_left(key)){if(store_selected>0)--store_selected;if(store_selected<store_scroll)store_scroll=store_selected;}
+            else if(is_down(key)||is_right(key)){if(store_selected+1<store_count)++store_selected;if(store_selected>=store_scroll+4)store_scroll=store_selected-3;}
+            else if(key==KEY_ENTER){
                 if(package_installed(store_ids[store_selected])) {
                     if(!launch_installed_package(store_ids[store_selected]))std::snprintf(store_message,sizeof(store_message),"APP LOAD FAILED");
                 } else install_store_package();
             }
         } else if(active_app==13){
-            if(key==65){package_running=false;active_app=5;}
-            else if(key==67){package_counter=std::min(999999,package_counter+package_increment);}
+            if(is_back(key)){package_running=false;active_app=5;}
+            else if(key==KEY_ENTER){package_counter=std::min(999999,package_counter+package_increment);}
         } else if(active_app==6){
-            if(key==65){if(clock_len>0)clock_input[--clock_len]=0;else active_app=-1;}
+            if(key==KEY_BACKSPACE){if(clock_len>0)clock_input[--clock_len]=0;else active_app=-1;}
             else if(ch>='0'&&ch<='9'&&clock_len<6){clock_input[clock_len++]=ch;clock_input[clock_len]=0;}
-            else if(key==67&&clock_len==6){int hh=(clock_input[0]-'0')*10+clock_input[1]-'0',mm=(clock_input[2]-'0')*10+clock_input[3]-'0',ss=(clock_input[4]-'0')*10+clock_input[5]-'0';if(hh<24&&mm<60&&ss<60){struct timeval tv{};tv.tv_sec=(std::time(nullptr)/86400)*86400+hh*3600+mm*60+ss;settimeofday(&tv,nullptr);clock_len=0;clock_input[0]=0;}}
+            else if(key==KEY_ENTER&&clock_len==6){int hh=(clock_input[0]-'0')*10+clock_input[1]-'0',mm=(clock_input[2]-'0')*10+clock_input[3]-'0',ss=(clock_input[4]-'0')*10+clock_input[5]-'0';if(hh<24&&mm<60&&ss<60){struct timeval tv{};tv.tv_sec=(std::time(nullptr)/86400)*86400+hh*3600+mm*60+ss;settimeofday(&tv,nullptr);clock_len=0;clock_input[0]=0;}}
         } else if(active_app==7){
-            if(key==53||key==44){timer_seconds=std::max(0,timer_seconds-10);if(timer_running)timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;}
-            else if(key==48||key==54){timer_seconds=std::min(5999,timer_seconds+10);if(timer_running)timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;}
-            else if(key==67){if(timer_running){timer_running=false;timer_seconds=std::max(0,(int)((timer_end_us-esp_timer_get_time()+999999)/1000000));}else{timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;timer_running=true;}}
+            if(is_up(key)||is_left(key)){timer_seconds=std::max(0,timer_seconds-10);if(timer_running)timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;}
+            else if(is_down(key)||is_right(key)){timer_seconds=std::min(5999,timer_seconds+10);if(timer_running)timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;}
+            else if(key==KEY_ENTER){if(timer_running){timer_running=false;timer_seconds=std::max(0,(int)((timer_end_us-esp_timer_get_time()+999999)/1000000));}else{timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;timer_running=true;}}
         } else if(active_app==8){/* Every key press is counted above. */}
         else if(active_app==11){
-            if(key==65){active_app=-1;game_started=false;}
-            else if(!game_started&&key==67){game_started=true;game_over=false;snake_len=3;snake_x[0]=10;snake_y[0]=4;snake_x[1]=9;snake_y[1]=4;snake_x[2]=8;snake_y[2]=4;snake_dx=1;snake_dy=0;food_x=14;food_y=4;game_score=0;game_tick_us=esp_timer_get_time();}
-            else if(ch=='w'&&snake_dy==0){snake_dx=0;snake_dy=-1;}
-            else if(ch=='s'&&snake_dy==0){snake_dx=0;snake_dy=1;}
-            else if(ch=='a'&&snake_dx==0){snake_dx=-1;snake_dy=0;}
-            else if(ch=='d'&&snake_dx==0){snake_dx=1;snake_dy=0;}
-            else if(game_over&&key==67)game_started=false;
+            if(is_back(key)){active_app=-1;game_started=false;}
+            else if(!game_started&&key==KEY_ENTER){game_started=true;game_over=false;snake_len=3;snake_x[0]=10;snake_y[0]=4;snake_x[1]=9;snake_y[1]=4;snake_x[2]=8;snake_y[2]=4;snake_dx=1;snake_dy=0;food_x=14;food_y=4;game_score=0;game_tick_us=esp_timer_get_time();}
+            else if(is_up(key)&&snake_dy==0){snake_dx=0;snake_dy=-1;}
+            else if(is_down(key)&&snake_dy==0){snake_dx=0;snake_dy=1;}
+            else if(is_left(key)&&snake_dx==0){snake_dx=-1;snake_dy=0;}
+            else if(is_right(key)&&snake_dx==0){snake_dx=1;snake_dy=0;}
+            else if(game_over&&key==KEY_ENTER)game_started=false;
         }
-        if(key==65&&active_app!=0&&active_app!=1&&active_app!=2&&active_app!=5&&active_app!=6&&active_app!=11)active_app=-1;
+        if(is_back(key)&&active_app!=0&&active_app!=1&&active_app!=2&&active_app!=5&&active_app!=6&&active_app!=11)active_app=-1;
     }
     std::uint8_t status=0;if(keyboard_read(0x02,&status)==ESP_OK&&(status&0x01))keyboard_write(0x02,0x01);
 }} // namespace
