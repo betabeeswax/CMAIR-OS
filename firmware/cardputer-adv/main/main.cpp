@@ -194,7 +194,8 @@ bool eval_expr(const char*& p,double& out) {
 void calculate() {
     const char* p=calc_buffer; double result=0;
     if(!eval_expr(p,result)){std::snprintf(calc_buffer,sizeof(calc_buffer),"INVALID / DIV0");return;}
-    while(*p==' ')++p;if(*p){std::snprintf(calc_buffer,sizeof(calc_buffer),"INVALID INPUT");return;}
+    while(*p==' ')++p;
+    if(*p){std::snprintf(calc_buffer,sizeof(calc_buffer),"INVALID INPUT");return;}
     std::snprintf(calc_buffer,sizeof(calc_buffer),"%.8g",result);
 }
 void refresh_files() {
@@ -203,8 +204,8 @@ void refresh_files() {
     struct dirent* e;
     while((e=readdir(d))!=nullptr && file_count<32) {
         if(e->d_name[0]=='.')continue;
-        std::snprintf(file_names[file_count],sizeof(file_names[file_count]),"%s",e->d_name);
-        char full[240];std::snprintf(full,sizeof(full),"%s/%s",current_dir,e->d_name);
+        std::snprintf(file_names[file_count],sizeof(file_names[file_count]),"%.63s",e->d_name);
+        char full[240];std::snprintf(full,sizeof(full),"%.159s/%.63s",current_dir,e->d_name);
         struct stat st{};file_is_dir[file_count]=(stat(full,&st)==0 && S_ISDIR(st.st_mode));
         ++file_count;
     }
@@ -243,8 +244,11 @@ bool connect_wifi_from_sd() {
     wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();
     e=esp_wifi_init(&init);if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
     wifi_config_t cfg={};
-    std::snprintf((char*)cfg.sta.ssid,sizeof(cfg.sta.ssid),"%s",ssid);
-    std::snprintf((char*)cfg.sta.password,sizeof(cfg.sta.password),"%s",password);
+    if(std::strlen(ssid)>sizeof(cfg.sta.ssid)-1||std::strlen(password)>sizeof(cfg.sta.password)-1){
+        std::snprintf(store_message,sizeof(store_message),"WIFI CREDENTIAL TOO LONG");return false;
+    }
+    std::memcpy(cfg.sta.ssid,ssid,std::strlen(ssid));
+    std::memcpy(cfg.sta.password,password,std::strlen(password));
     cfg.sta.threshold.authmode=WIFI_AUTH_OPEN;
     if(esp_wifi_set_mode(WIFI_MODE_STA)!=ESP_OK||esp_wifi_set_config(WIFI_IF_STA,&cfg)!=ESP_OK||
        esp_wifi_start()!=ESP_OK||esp_wifi_connect()!=ESP_OK){std::snprintf(store_message,sizeof(store_message),"WIFI START FAILED");return false;}
@@ -307,6 +311,7 @@ bool launch_installed_package(const char* id) {
     char path[160];if(!sd_ready||!package_path(path,sizeof(path),id))return false;
     FILE* f=std::fopen(path,"r");if(!f)return false;
     char data[4096]={};size_t n=std::fread(data,1,sizeof(data)-1,f);std::fclose(f);
+    if(n==0)return false;
     cJSON* root=cJSON_Parse(data);if(!root)return false;
     cJSON* fmt=cJSON_GetObjectItemCaseSensitive(root,"format");
     cJSON* pid=cJSON_GetObjectItemCaseSensitive(root,"id");
@@ -376,7 +381,7 @@ void seed_store() { /* Store entries are fetched from the official GitHub catalo
 void open_selected_file() {
     if(file_count==0)return;
     char path[240];std::snprintf(path,sizeof(path),"%s/%s",current_dir,file_names[file_selected]);
-    if(file_is_dir[file_selected]){std::snprintf(current_dir,sizeof(current_dir),"%s",path);refresh_files();return;}
+    if(file_is_dir[file_selected]){std::snprintf(current_dir,sizeof(current_dir),"%.159s",path);refresh_files();return;}
     FILE* f=std::fopen(path,"r");if(!f)return;
     const size_t n=std::fread(viewer_buffer,1,sizeof(viewer_buffer)-1,f);viewer_buffer[n]=0;std::fclose(f);viewing_file=true;
 }
