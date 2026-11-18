@@ -25,7 +25,6 @@
 #include <ctime>
 #include <cstdlib>
 #include <cmath>
-#include <sys/statvfs.h>
 #include <sys/time.h>
 #include <unistd.h>
 
@@ -281,9 +280,7 @@ void render_app() {
         std::snprintf(line,sizeof(line),"KEY EVENTS: %lu",(unsigned long)keypress_count);draw_text(line,8,69,1,ink);
         draw_text("TYPE ANY KEY TO TEST",8,95,1,muted);break;
     case 9: {
-        struct statvfs v{};if(sd_ready&&statvfs("/sdcard",&v)==0){unsigned long long total=(unsigned long long)v.f_blocks*v.f_frsize,freeb=(unsigned long long)v.f_bavail*v.f_frsize;
-            std::snprintf(line,sizeof(line),"TOTAL %llu MB",total/1048576);draw_text(line,8,35,1,ink);std::snprintf(line,sizeof(line),"FREE %llu MB",freeb/1048576);draw_text(line,8,54,1,ink);
-            draw_text("FILESYSTEM FAT",8,75,1,accent);}else draw_text("SD CARD NOT MOUNTED",8,43,1,ink);break;}
+        if(sd_ready){draw_text("SD CARD MOUNTED",8,35,1,accent);draw_text("FILESYSTEM FAT",8,54,1,ink);draw_text("USE FILE MANAGER",8,73,1,muted);}else draw_text("SD CARD NOT MOUNTED",8,43,1,ink);break;}
     case 10:
         draw_text(keyboard_ready?"KEYBOARD PASS":"KEYBOARD FAIL",8,30,1,ink);draw_text(sd_ready?"SD MOUNT PASS":"SD MOUNT FAIL",8,48,1,ink);
         std::snprintf(line,sizeof(line),"FREE HEAP %lu",(unsigned long)esp_get_free_heap_size());draw_text(line,8,66,1,ink);
