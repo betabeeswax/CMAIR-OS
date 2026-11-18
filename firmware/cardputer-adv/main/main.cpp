@@ -327,7 +327,7 @@ void ble_gap_event(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param) 
 bool start_ble_scan() {
     if(!ble_ready) {
         esp_err_t e=esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
-        if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
+        if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE&&e!=ESP_ERR_NOT_SUPPORTED)return false;
         esp_bt_controller_config_t cfg=BT_CONTROLLER_INIT_CONFIG_DEFAULT();
         e=esp_bt_controller_init(&cfg);
         if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
