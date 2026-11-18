@@ -234,7 +234,7 @@ void poll_keyboard() {
 } // namespace
 
 extern "C" void app_main(void) {
-    ESP_LOGI(kTag,"Starting MCAI-OS Cardputer ADV");
+    ESP_LOGI(kTag,"Starting MCAI-OS Cardputer ADV - keypad input enabled");
     init_display();
     init_keyboard();
     init_sd_card();
