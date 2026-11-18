@@ -335,7 +335,7 @@ bool launch_installed_package(const char* id) {
 }
 void install_store_package() {
     if(!catalogue_loaded||store_count==0)return;
-    if(std::strcmp(store_status[store_selected],"available")!=0||
+    if((std::strcmp(store_status[store_selected],"available")!=0&&std::strcmp(store_status[store_selected],"experimental")!=0)||
        !store_urls[store_selected][0]||std::strlen(store_hashes[store_selected])!=64||store_sizes[store_selected]==0){
       std::snprintf(store_message,sizeof(store_message),"NO VERIFIED PACKAGE");return;
     }
@@ -412,7 +412,7 @@ void render_app() {
     case 5:
         draw_text("GITHUB APP STORE",8,25,1,accent);
         draw_text(catalogue_loaded?"MCAI-OS-APPS / MAIN":"GITHUB CATALOGUE",8,39,1,ink);
-        for(int i=0;i<4;i++){int ix=store_scroll+i;if(ix>=store_count)break;char row[40];std::snprintf(row,sizeof(row),"%c %.20s %s",ix==store_selected?'>':' ',store_names[ix],package_installed(store_ids[ix])?"INSTALLED":(std::strcmp(store_status[ix],"available")==0?"AVAILABLE":"PLANNED"));draw_text(row,8,54+i*13,1,ix==store_selected?accent:ink);}
+        for(int i=0;i<4;i++){int ix=store_scroll+i;if(ix>=store_count)break;char row[40];std::snprintf(row,sizeof(row),"%c %.20s %s",ix==store_selected?'>':' ',store_names[ix],package_installed(store_ids[ix])?"INSTALLED":(std::strcmp(store_status[ix],"available")==0?"AVAILABLE":(std::strcmp(store_status[ix],"experimental")==0?"EXPERIMENTAL":"PLANNED")));draw_text(row,8,54+i*13,1,ix==store_selected?accent:ink);}
         draw_text(store_message,8,110,1,muted);draw_text("UP/DOWN ENTER INFO",8,122,1,muted);break;
     case 6: {
         std::time_t now=std::time(nullptr);std::tm tmv{};localtime_r(&now,&tmv);
