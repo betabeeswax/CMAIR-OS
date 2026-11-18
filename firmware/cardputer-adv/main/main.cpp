@@ -217,7 +217,13 @@ esp_err_t catalogue_http_event(esp_http_client_event_t* evt) {
     return ESP_OK;
 }
 bool connect_wifi_from_sd() {
-    if(wifi_started) return true;
+    if(wifi_started) {
+        wifi_ap_record_t current{};
+        if(esp_wifi_sta_get_ap_info(&current)==ESP_OK)return true;
+        esp_wifi_connect();
+        for(int i=0;i<80;i++){if(esp_wifi_sta_get_ap_info(&current)==ESP_OK)return true;vTaskDelay(pdMS_TO_TICKS(250));}
+        std::snprintf(store_message,sizeof(store_message),"WIFI RECONNECT FAILED");return false;
+    }
     mkdir("/sdcard/MCAI-OS",0775);
     FILE* f=std::fopen("/sdcard/MCAI-OS/wifi.cfg","r");
     if(!f){std::snprintf(store_message,sizeof(store_message),"ADD WIFI.CFG ON SD");return false;}
