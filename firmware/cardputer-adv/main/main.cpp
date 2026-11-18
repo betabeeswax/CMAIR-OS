@@ -143,8 +143,9 @@ void init_display() {
 }
 
 esp_err_t keyboard_write(std::uint8_t reg,std::uint8_t value) {
+    const std::uint8_t packet[2] = {reg, value};
     return i2c_master_write_to_device(I2C_NUM_0,kKeyboardAddress,
-        (std::uint8_t[]){reg,value},2,pdMS_TO_TICKS(100));
+        packet,sizeof(packet),pdMS_TO_TICKS(100));
 }
 esp_err_t keyboard_read(std::uint8_t reg,std::uint8_t* value) {
     return i2c_master_write_read_device(I2C_NUM_0,kKeyboardAddress,&reg,1,value,1,pdMS_TO_TICKS(100));
