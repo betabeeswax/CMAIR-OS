@@ -8,7 +8,7 @@
 
 MCAI-OS is being developed as a small, modular system rather than a web page pretending to be an OS. The Cardputer build must respect its 240 × 135 display, limited internal flash/RAM, keyboard, battery, wireless hardware and microSD storage. Desktop builds can provide richer versions of the same apps.
 
-> **Project status:** early foundation. This repository is the starting point, not a claim that all 106 apps or hardware drivers are already complete.
+> **Project status:** early foundation. This repository is the starting point, not a claim that all 109 apps or hardware drivers are already complete.
 
 ## Targets
 
