@@ -117,7 +117,7 @@ bool game_over = false;
 bool dark_theme = true;
 bool ui_dirty=true;
 bool boot_button_was_pressed = false;
-constexpr int kAppsPerPage = 5;
+constexpr int kAppsPerPage = 4;
 constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT"};
 constexpr int kAppCount = sizeof(kApps) / sizeof(kApps[0]);
 alignas(4) std::uint16_t framebuffer[kWidth * kHeight];
@@ -196,14 +196,14 @@ void draw_mcaI_logo_splash() {
         fill_round_rect(x+2,7,55,43,8,black);
         fill_round_rect(x,4,55,43,8,black);
         fill_round_rect(x+2,6,51,38,7,white);
-        draw_text((char[2]){keys[i],0},x+14,14,4,black);
+        char letter[2]={keys[i],0};\n        draw_text(letter,x+14,14,4,black);
     }
     fill_rect(0,54,240,81,black);
     fill_rect(2,56,236,77,frame);
     fill_rect(4,58,232,69,grey);
     fill_rect(4,58,232,14,navy);
     fill_rect(4,73,232,54,grey);
-    draw_text("OS",65,75,9,black);
+    draw_text("OS",77,77,7,black);
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
 }
 
