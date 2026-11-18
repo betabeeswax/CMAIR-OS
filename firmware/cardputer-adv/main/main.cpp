@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 
 namespace {
 constexpr char kTag[] = "MCAI-OS";
@@ -120,7 +121,7 @@ void init_display() {
     bus.miso_io_num = -1;
     bus.quadwp_io_num = -1;
     bus.quadhd_io_num = -1;
-    bus.max_transfer_sz = kWidth * 16 * sizeof(std::uint16_t);
+    bus.max_transfer_sz = kWidth * kHeight * sizeof(std::uint16_t);
     ESP_ERROR_CHECK(spi_bus_initialize(SPI3_HOST, &bus, SPI_DMA_CH_AUTO));
 
     esp_lcd_panel_io_handle_t io = nullptr;
