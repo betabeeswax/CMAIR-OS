@@ -758,7 +758,7 @@ bool init_audio() {
     }
     i2s_config_t cfg={};
     cfg.mode=(i2s_mode_t)(I2S_MODE_MASTER|I2S_MODE_TX);
-    cfg.sample_rate=16000;
+    cfg.sample_rate=44100;
     cfg.bits_per_sample=I2S_BITS_PER_SAMPLE_16BIT;
     cfg.channel_format=I2S_CHANNEL_FMT_RIGHT_LEFT;
     cfg.communication_format=I2S_COMM_FORMAT_STAND_I2S;
@@ -781,7 +781,7 @@ bool init_audio() {
 }
 void play_tone(std::uint32_t frequency,std::uint32_t duration_ms) {
     if(!audio_ready||!sound_enabled||frequency==0)return;
-    constexpr std::uint32_t rate=16000;
+    constexpr std::uint32_t rate=44100;
     constexpr size_t chunk=128;
     std::int16_t samples[chunk*2];
     const std::uint32_t total=rate*duration_ms/1000;
