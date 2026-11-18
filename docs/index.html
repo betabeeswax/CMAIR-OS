@@ -55,8 +55,17 @@
    const asset=release.assets.find(a=>a.name==='cmair-os-cardputer-adv.bin');
    status.className='status ready';
    status.innerHTML='<strong>Development firmware available: '+release.tag_name+'</strong><span class="note"> '+asset.name+' · '+(asset.size/1024/1024).toFixed(2)+' MB. This is an early development test build. Connect your Cardputer ADV only if you understand it is not the finished OS.</span>';
+   // Build the manifest from the exact release asset we just found.
+   // This prevents the flasher from showing a newer release but flashing an old,
+   // hard-coded binary URL from manifest.json.
+   const liveManifest={
+     name:'MCAI-OS for M5Stack Cardputer ADV',
+     version:release.tag_name,
+     builds:[{chipFamily:'ESP32-S3',parts:[{path:asset.browser_download_url,offset:0}]}]
+   };
+   const liveManifestUrl=URL.createObjectURL(new Blob([JSON.stringify(liveManifest)],{type:'application/json'}));
    const button=document.createElement('esp-web-install-button');
-   button.setAttribute('manifest','./manifest.json');
+   button.setAttribute('manifest',liveManifestUrl);
    installer.appendChild(button);
  }catch(error){status.className='status error';status.innerHTML='<strong>Could not check for firmware.</strong><span class="note">'+error.message+' You can still visit the GitHub releases page below.</span>';}
 })();
