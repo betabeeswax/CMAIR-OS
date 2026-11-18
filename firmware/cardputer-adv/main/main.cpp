@@ -316,12 +316,12 @@ void ble_gap_event(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param) 
             }
             bool duplicate=false;
             for(int i=0;i<ble_device_count;i++)if(std::strcmp(ble_devices[i],label)==0)duplicate=true;
-            if(!duplicate)std::snprintf(ble_devices[ble_device_count++],sizeof(ble_devices[0]),"%.31s",label);
+            if(!duplicate){std::snprintf(ble_devices[ble_device_count++],sizeof(ble_devices[0]),"%.31s",label);ui_dirty=true;}
         } else if(param->scan_rst.search_evt==ESP_GAP_SEARCH_INQ_CMPL_EVT) {
-            ble_scan_active=false;
+            ble_scan_active=false;ui_dirty=true;
         }
     } else if(event==ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT) {
-        ble_scan_active=false;
+        ble_scan_active=false;ui_dirty=true;
     }
 }
 bool start_ble_scan() {
