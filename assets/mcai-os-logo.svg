@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="360" viewBox="0 0 900 360" role="img" aria-labelledby="title desc">
+  <title id="title">MCAI OS</title>
+  <desc id="desc">MCAI in large bold lettering with a smaller OS underneath the right side.</desc>
+  <defs>
+    <linearGradient id="a" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#62f0ce"/>
+      <stop offset="1" stop-color="#46a8ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="360" rx="44" fill="#0b1020"/>
+  <path d="M70 288V72h70l92 118 92-118h70v216h-70V181l-92 112-92-112v107z" fill="url(#a)"/>
+  <text x="395" y="288" font-family="Arial, Helvetica, sans-serif" font-size="250" font-weight="900" letter-spacing="-12" fill="#f4f8ff">CAI</text>
+  <text x="745" y="340" font-family="Arial, Helvetica, sans-serif" font-size="74" font-weight="800" letter-spacing="8" fill="#62f0ce">OS</text>
+</svg>
