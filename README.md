@@ -16,7 +16,7 @@ MCAI-OS is being developed as a small, modular system rather than a web page pre
 
 ## App catalogue
 
-The complete 106-entry list is in [`apps/catalogue.json`](apps/catalogue.json). Names are kept as specified. In particular, the media player is named **MLC**; app names are not automatically prefixed with “AIR”.
+The complete 106-entry list is in [`apps/catalogue.json`](apps/catalogue.json). The separate [MCAI-OS Apps repository](https://github.com/betabeeswax/MCAI-OS-APPS) is the home for app packages, manifests, developer format documentation and the app catalogue mirror. Names are kept as specified. In particular, the media player is named **MLC**; app names are not automatically prefixed with “AIR”.
 
 The catalogue is a roadmap. Entries are not represented as implemented until their code and tests exist.
 
