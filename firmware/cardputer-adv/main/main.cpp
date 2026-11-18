@@ -328,63 +328,15 @@ esp_err_t catalogue_http_event(esp_http_client_event_t* evt) {
     }
     return ESP_OK;
 }
-void ble_gap_event(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param) {
-    if(event==ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT) {
-        if(param->scan_param_cmpl.status==ESP_BT_STATUS_SUCCESS) {
-            ble_scan_active=true;
-            esp_ble_gap_start_scanning(12);
-        }
-    } else if(event==ESP_GAP_BLE_SCAN_RESULT_EVT) {
-        if(param->scan_rst.search_evt==ESP_GAP_SEARCH_INQ_RES_EVT && ble_device_count<12) {
-            char label[32]={};
-            std::uint8_t name_len=0;
-            std::uint8_t* name=esp_ble_resolve_adv_data(param->scan_rst.ble_adv,ESP_BLE_AD_TYPE_NAME_CMPL,&name_len);
-            if(name&&name_len) {
-                const size_t n=std::min((size_t)name_len,sizeof(label)-1);
-                std::memcpy(label,name,n); label[n]=0;
-            } else {
-                std::snprintf(label,sizeof(label),"%02X:%02X:%02X:%02X:%02X:%02X",
-                    param->scan_rst.bda[0],param->scan_rst.bda[1],param->scan_rst.bda[2],
-                    param->scan_rst.bda[3],param->scan_rst.bda[4],param->scan_rst.bda[5]);
-            }
-            bool duplicate=false;
-            for(int i=0;i<ble_device_count;i++)if(std::strcmp(ble_devices[i],label)==0)duplicate=true;
-            if(!duplicate){std::snprintf(ble_devices[ble_device_count++],sizeof(ble_devices[0]),"%.31s",label);ui_dirty=true;}
-        } else if(param->scan_rst.search_evt==ESP_GAP_SEARCH_INQ_CMPL_EVT) {
-            ble_scan_active=false;ui_dirty=true;
-        }
-    } else if(event==ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT) {
-        ble_scan_active=false;ui_dirty=true;
-    }
-}
+// BLE scanning is disabled until the ESP-IDF Bluedroid GAP
+// symbols are correctly linked for this target. Never show fake scan results.
 bool start_ble_scan() {
-    if(!ble_ready) {
-        esp_err_t e=esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
-        if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE&&e!=ESP_ERR_NOT_SUPPORTED)return false;
-        esp_bt_controller_config_t cfg=BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-        e=esp_bt_controller_init(&cfg);
-        if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
-        e=esp_bt_controller_enable(ESP_BT_MODE_BLE);
-        if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
-        e=esp_bluedroid_init();
-        if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
-        e=esp_bluedroid_enable();
-        if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
-        if(esp_ble_gap_register_callback(ble_gap_event)!=ESP_OK)return false;
-        ble_ready=true;
-    }
-    ble_device_count=0;ble_device_scroll=0;
-    esp_ble_scan_params_t params={};
-    params.scan_type=BLE_SCAN_TYPE_ACTIVE;
-    params.own_addr_type=BLE_ADDR_TYPE_PUBLIC;
-    params.scan_filter_policy=BLE_SCAN_FILTER_ALLOW_ALL;
-    params.scan_interval=0x50;
-    params.scan_window=0x30;
-    params.scan_duplicate=BLE_SCAN_DUPLICATE_DISABLE;
-    return esp_ble_gap_set_scan_params(&params)==ESP_OK;
+    ble_scan_active=false;
+    ble_device_count=0;
+    std::snprintf(store_message,sizeof(store_message),"BLE SUPPORT NOT READY");
+    return false;
 }
 void stop_ble_scan() {
-    if(ble_ready&&ble_scan_active)esp_ble_gap_stop_scanning();
     ble_scan_active=false;
 }
 void start_time_sync() {
@@ -956,7 +908,7 @@ void poll_keyboard() {
             } else if(key==KEY_ENTER){
                 if(settings_selection==1){dark_theme=!dark_theme;save_settings();}
                 else if(settings_selection==2){load_wifi_settings();wifi_setup_step=1;}
-                else if(settings_selection==3){bluetooth_screen=true;if(!start_ble_scan())std::snprintf(store_message,sizeof(store_message),"BLE START FAILED");}
+                else if(settings_selection==3){bluetooth_screen=true;if(!start_ble_scan())ui_dirty=true;}
                 else if(settings_selection==4){sound_enabled=!sound_enabled;save_settings();}
             } else if(key==KEY_ESC)active_app=-1;
         } else if(active_app==5){
