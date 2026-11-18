@@ -177,8 +177,10 @@ void load_note() {
     if(f){note_length=(int)std::fread(note_buffer,1,sizeof(note_buffer)-1,f);note_buffer[note_length]=0;std::fclose(f);}
 }
 bool eval_expr(const char*& p,double& out);
-bool eval_factor(const char*& p,double& out) {    while(*p==' ') ++p;
-    if(*p=='-'){++p;if(!eval_factor(p,out))return false;out=-out;return true;}    if(*p=='('){++p;if(!eval_expr(p,out))return false;while(*p==' ')++p;if(*p!=')')return false;++p;return true;}
+bool eval_factor(const char*& p,double& out) {
+    while(*p==' ') ++p;
+    if(*p=='-'){++p;if(!eval_factor(p,out))return false;out=-out;return true;}
+    if(*p=='('){++p;if(!eval_expr(p,out))return false;while(*p==' ')++p;if(*p!=')')return false;++p;return true;}
     char* end=nullptr;out=std::strtod(p,&end);if(end==p)return false;p=end;return std::isfinite(out);
 }
 bool eval_term(const char*& p,double& out) {
@@ -279,12 +281,13 @@ void refresh_store() {
             cJSON* url=cJSON_GetObjectItemCaseSensitive(package,"url");
             cJSON* hash=cJSON_GetObjectItemCaseSensitive(package,"sha256");
             cJSON* format=cJSON_GetObjectItemCaseSensitive(package,"format");
+            cJSON* size=cJSON_GetObjectItemCaseSensitive(package,"sizeBytes");
             if(cJSON_IsString(url)&&cJSON_IsString(hash)&&cJSON_IsString(format)&&
-               std::strcmp(format->valuestring,"mcai-app-v1")==0){
+               std::strcmp(format->valuestring,"mcai-app-v1")==0&&cJSON_IsNumber(size)&&
+               size->valuedouble>0&&size->valuedouble<=4096&&std::strncmp(url->valuestring,"https://",8)==0){
                 std::snprintf(store_urls[store_count],256,"%s",url->valuestring);
                 std::snprintf(store_hashes[store_count],65,"%s",hash->valuestring);
-                cJSON* size=cJSON_GetObjectItemCaseSensitive(package,"sizeBytes");
-                if(cJSON_IsNumber(size)&&size->valuedouble>0&&size->valuedouble<=4096)store_sizes[store_count]=(size_t)size->valuedouble;
+                store_sizes[store_count]=(size_t)size->valuedouble;
             }
         }
         ++store_count;
@@ -324,15 +327,16 @@ bool launch_installed_package(const char* id) {
       std::snprintf(package_id,sizeof(package_id),"%s",id);
       std::snprintf(package_title,sizeof(package_title),"%s",title->valuestring);
       std::snprintf(package_subtitle,sizeof(package_subtitle),"%s",subtitle->valuestring);
-      package_counter=std::max(-999999,std::min(999999,(int)initial->valuedouble));
-      package_increment=std::max(1,std::min(1000,(int)increment->valuedouble));
+      package_counter=(int)initial->valuedouble;
+      package_increment=(int)increment->valuedouble;
       package_running=true;active_app=13;
     }
     cJSON_Delete(root);return valid;
 }
 void install_store_package() {
     if(!catalogue_loaded||store_count==0)return;
-    if(std::strcmp(store_status[store_selected],"available")!=0||std::strncmp(store_urls[store_selected],"https://",8)!=0||std::strlen(store_hashes[store_selected])!=64||store_sizes[store_selected]==0){
+    if(std::strcmp(store_status[store_selected],"available")!=0||
+       !store_urls[store_selected][0]||std::strlen(store_hashes[store_selected])!=64||store_sizes[store_selected]==0){
       std::snprintf(store_message,sizeof(store_message),"NO VERIFIED PACKAGE");return;
     }
     if(!sd_ready){std::snprintf(store_message,sizeof(store_message),"INSERT SD CARD");return;}
@@ -343,8 +347,11 @@ void install_store_package() {
     esp_http_client_handle_t client=esp_http_client_init(&cfg);
     if(!client){std::snprintf(store_message,sizeof(store_message),"PACKAGE HTTP INIT FAIL");return;}
     esp_err_t result=esp_http_client_perform(client);int status=esp_http_client_get_status_code(client);esp_http_client_cleanup(client);
-    if(result!=ESP_OK||status!=200||catalogue_length==0||catalogue_length>4096||catalogue_length!=store_sizes[store_selected]){std::snprintf(store_message,sizeof(store_message),"PACKAGE DOWNLOAD FAIL");return;}
-    unsigned char digest[32];if(mbedtls_sha256((const unsigned char*)catalogue_buffer,catalogue_length,digest,0)!=0){
+    if(result!=ESP_OK||status!=200||catalogue_length==0||catalogue_length>4096||catalogue_length!=store_sizes[store_selected]){
+      std::snprintf(store_message,sizeof(store_message),"PACKAGE DOWNLOAD FAIL");return;
+    }
+    unsigned char digest[32];
+    if(mbedtls_sha256((const unsigned char*)catalogue_buffer,catalogue_length,digest,0)!=0){
       std::snprintf(store_message,sizeof(store_message),"CHECKSUM ERROR");return;
     }
     char hex[65];for(int i=0;i<32;i++)std::snprintf(hex+i*2,3,"%02x",digest[i]);hex[64]=0;
@@ -360,7 +367,8 @@ void install_store_package() {
     if(!valid){std::snprintf(store_message,sizeof(store_message),"INVALID APP PACKAGE");return;}
     mkdir("/sdcard/MCAI-OS",0775);mkdir("/sdcard/MCAI-OS/apps",0775);
     char path[160];if(!package_path(path,sizeof(path),store_ids[store_selected])){std::snprintf(store_message,sizeof(store_message),"BAD APP ID");return;}
-    FILE* f=std::fopen(path,"w");if(!f){std::snprintf(store_message,sizeof(store_message),"SD WRITE FAILED");return;}    size_t wrote=std::fwrite(catalogue_buffer,1,catalogue_length,f);bool saved=std::fclose(f)==0&&wrote==catalogue_length;
+    FILE* f=std::fopen(path,"w");if(!f){std::snprintf(store_message,sizeof(store_message),"SD WRITE FAILED");return;}
+    size_t wrote=std::fwrite(catalogue_buffer,1,catalogue_length,f);bool saved=std::fclose(f)==0&&wrote==catalogue_length;
     if(!saved){unlink(path);std::snprintf(store_message,sizeof(store_message),"APP SAVE FAILED");return;}
     std::snprintf(store_message,sizeof(store_message),"INSTALLED - ENTER TO OPEN");
 }
@@ -445,7 +453,8 @@ void render_app() {
 void render_home() {
     const auto bg=rgb565(11,16,29), card=rgb565(22,31,49), accent=rgb565(87,231,190);
     const auto white=rgb565(244,248,255), muted=rgb565(150,166,190), selected=rgb565(37,68,75);
-    if(active_app>=0) { render_app(); return; }    std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
+    if(active_app>=0) { render_app(); return; }
+    std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
     fill_rect(0,0,kWidth,3,accent); draw_text("MCAI-OS",8,7,2,accent);
     draw_text(sd_ready?"SD READY":"NO SD",158,12,1,sd_ready?accent:muted);
     draw_text("APP LAUNCHER",8,29,1,muted);
@@ -540,3 +549,109 @@ char decode_key(int row, int col) {
     static const unsigned char keys[4][14] = {
         {126,49,50,51,52,53,54,55,56,57,48,45,61,8},
         {9,113,119,101,114,116,121,117,105,111,112,91,93,92},
+        {0,0,97,115,100,102,103,104,106,107,108,59,39,10},
+        {0,0,0,122,120,99,118,98,110,109,44,46,47,32}
+    };
+    return keys[row][col] ? static_cast<char>(keys[row][col]) : 0;
+}
+
+void poll_keyboard() {
+    if(!keyboard_ready)return;
+    std::uint8_t count=0;if(keyboard_read(0x03,&count)!=ESP_OK)return;count&=0x0F;
+    while(count--){
+        std::uint8_t event=0;if(keyboard_read(0x04,&event)!=ESP_OK||event==0)break;
+        if((event&0x80)==0)continue; // TCA8418: bit 7 = key press, 0 = release.
+        const std::uint8_t key=event&0x7F;
+        const int ix=key>0?key-1:0, rr=ix/10, rc=ix%10;
+        const int col=rr*2+(rc>3?1:0),row=(rc+4)%4;
+        const char ch=(row>=0&&row<4&&col>=0&&col<14)?decode_key(row,col):0;
+        last_char=ch?ch:'?';++keypress_count;
+        if(active_app<0){
+            if(key==53||key==44)selected_app=(selected_app+kAppCount-1)%kAppCount;
+            else if(key==48||key==54)selected_app=(selected_app+1)%kAppCount;
+            else if(key==67){active_app=selected_app;if(active_app==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}if(active_app==1)load_note();if(active_app==5){refresh_store();}}
+            continue;
+        }
+        if(active_app==0){
+            if(viewing_file){if(key==65)viewing_file=false;else if(key==53||key==44)file_scroll=std::max(0,file_scroll-1);else if(key==48||key==54)++file_scroll;}
+            else if(key==65){if(std::strcmp(current_dir,"/sdcard")!=0){char* slash=std::strrchr(current_dir,'/');if(slash&&slash!=current_dir)*slash=0;else std::strcpy(current_dir,"/sdcard");refresh_files();}else active_app=-1;}
+            else if(key==53||key==44){if(file_selected>0)--file_selected;if(file_selected<file_scroll)file_scroll=file_selected;}
+            else if(key==48||key==54){if(file_selected+1<file_count)++file_selected;if(file_selected>=file_scroll+5)file_scroll=file_selected-4;}
+            else if(key==67)open_selected_file();
+        } else if(active_app==1){
+            if(key==65){if(note_length>0){--note_length;note_buffer[note_length]=0;save_note();}}
+            else if(key==67&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]='\n';note_buffer[note_length]=0;save_note();}
+            else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;save_note();}
+        } else if(active_app==2){
+            if(key==65){if(calc_length>0)calc_buffer[--calc_length]=0;}
+            else if(key==67)calculate();
+            else if(ch>=32&&ch<127&&calc_length<(int)sizeof(calc_buffer)-2){calc_buffer[calc_length++]=ch;calc_buffer[calc_length]=0;}
+        } else if(active_app==3){
+            if(key==53||key==44){setting_brightness=std::max(0,setting_brightness-1);apply_brightness();save_settings();}
+            else if(key==48||key==54){setting_brightness=std::min(2,setting_brightness+1);apply_brightness();save_settings();}
+            else if(key==67){dark_theme=!dark_theme;save_settings();}
+        } else if(active_app==5){
+            if(key==65)active_app=-1;
+            else if(key==53||key==44){if(store_selected>0)--store_selected;if(store_selected<store_scroll)store_scroll=store_selected;}
+            else if(key==48||key==54){if(store_selected+1<store_count)++store_selected;if(store_selected>=store_scroll+4)store_scroll=store_selected-3;}
+            else if(key==67){
+                if(package_installed(store_ids[store_selected])) {
+                    if(!launch_installed_package(store_ids[store_selected]))std::snprintf(store_message,sizeof(store_message),"APP LOAD FAILED");
+                } else install_store_package();
+            }
+        } else if(active_app==13){
+            if(key==65){package_running=false;active_app=5;}
+            else if(key==67){package_counter=std::min(999999,package_counter+package_increment);}
+        } else if(active_app==6){
+            if(key==65){if(clock_len>0)clock_input[--clock_len]=0;else active_app=-1;}
+            else if(ch>='0'&&ch<='9'&&clock_len<6){clock_input[clock_len++]=ch;clock_input[clock_len]=0;}
+            else if(key==67&&clock_len==6){int hh=(clock_input[0]-'0')*10+clock_input[1]-'0',mm=(clock_input[2]-'0')*10+clock_input[3]-'0',ss=(clock_input[4]-'0')*10+clock_input[5]-'0';if(hh<24&&mm<60&&ss<60){struct timeval tv{};tv.tv_sec=(std::time(nullptr)/86400)*86400+hh*3600+mm*60+ss;settimeofday(&tv,nullptr);clock_len=0;clock_input[0]=0;}}
+        } else if(active_app==7){
+            if(key==53||key==44){timer_seconds=std::max(0,timer_seconds-10);if(timer_running)timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;}
+            else if(key==48||key==54){timer_seconds=std::min(5999,timer_seconds+10);if(timer_running)timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;}
+            else if(key==67){if(timer_running){timer_running=false;timer_seconds=std::max(0,(int)((timer_end_us-esp_timer_get_time()+999999)/1000000));}else{timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;timer_running=true;}}
+        } else if(active_app==8){/* Every key press is counted above. */}
+        else if(active_app==11){
+            if(key==65){active_app=-1;game_started=false;}
+            else if(!game_started&&key==67){game_started=true;game_over=false;snake_len=3;snake_x[0]=10;snake_y[0]=4;snake_x[1]=9;snake_y[1]=4;snake_x[2]=8;snake_y[2]=4;snake_dx=1;snake_dy=0;food_x=14;food_y=4;game_score=0;game_tick_us=esp_timer_get_time();}
+            else if(ch=='w'&&snake_dy==0){snake_dx=0;snake_dy=-1;}
+            else if(ch=='s'&&snake_dy==0){snake_dx=0;snake_dy=1;}
+            else if(ch=='a'&&snake_dx==0){snake_dx=-1;snake_dy=0;}
+            else if(ch=='d'&&snake_dx==0){snake_dx=1;snake_dy=0;}
+            else if(game_over&&key==67)game_started=false;
+        }
+        if(key==65&&active_app!=0&&active_app!=1&&active_app!=2&&active_app!=6&&active_app!=11)active_app=-1;
+    }
+    std::uint8_t status=0;if(keyboard_read(0x02,&status)==ESP_OK&&(status&0x01))keyboard_write(0x02,0x01);
+}} // namespace
+
+extern "C" void app_main(void) {
+    ESP_LOGI(kTag,"Starting MCAI-OS Cardputer ADV");
+    init_display();
+    ledc_timer_config_t timer={};timer.speed_mode=LEDC_LOW_SPEED_MODE;timer.duty_resolution=LEDC_TIMER_13_BIT;timer.timer_num=LEDC_TIMER_0;timer.freq_hz=5000;timer.clk_cfg=LEDC_AUTO_CLK;ESP_ERROR_CHECK(ledc_timer_config(&timer));
+    ledc_channel_config_t channel={};channel.gpio_num=kLcdBacklight;channel.speed_mode=LEDC_LOW_SPEED_MODE;channel.channel=LEDC_CHANNEL_0;channel.intr_type=LEDC_INTR_DISABLE;channel.timer_sel=LEDC_TIMER_0;channel.duty=4096;channel.hpoint=0;ESP_ERROR_CHECK(ledc_channel_config(&channel));
+    init_keyboard();init_sd_card();load_settings();load_note();seed_store();apply_brightness();render_home();
+    for(;;){
+        const int old_app=active_app,old_sel=selected_app;
+        poll_keyboard();
+        const bool boot_pressed=gpio_get_level(GPIO_NUM_0)==0;
+        if(boot_pressed&&!boot_button_was_pressed){
+            if(active_app>=0){if(active_app==1)save_note();active_app=-1;viewing_file=false;}
+            else {active_app=selected_app;if(active_app==0){std::strcpy(current_dir,"/sdcard");refresh_files();}if(active_app==1)load_note();if(active_app==5){seed_store();refresh_store();}}
+        }
+        boot_button_was_pressed=boot_pressed;
+        const std::int64_t now=esp_timer_get_time();
+        if(timer_running&&now>=timer_end_us){timer_running=false;timer_seconds=0;}
+        if(active_app==11&&game_started&&!game_over&&now-game_tick_us>220000){
+            game_tick_us=now;
+            for(int i=snake_len-1;i>0;i--){snake_x[i]=snake_x[i-1];snake_y[i]=snake_y[i-1];}
+            snake_x[0]+=snake_dx;snake_y[0]+=snake_dy;
+            if(snake_x[0]<0||snake_x[0]>=23||snake_y[0]<0||snake_y[0]>=9)game_over=true;
+            for(int i=1;i<snake_len;i++)if(snake_x[0]==snake_x[i]&&snake_y[0]==snake_y[i])game_over=true;
+            if(snake_x[0]==food_x&&snake_y[0]==food_y){if(snake_len<47)++snake_len;++game_score;food_x=(food_x+7)%23;food_y=(food_y+3)%9;}
+        }
+        if(old_app!=active_app||old_sel!=selected_app||active_app==6||active_app==7||active_app==11||active_app==0||active_app==5||active_app==8)render_home();
+        if(active_app==1&&note_length>0&&note_length%24==0)save_note();
+        vTaskDelay(pdMS_TO_TICKS(60));
+    }
+}
