@@ -149,9 +149,13 @@ void draw_text(const char* text, int x, int y, int scale, std::uint16_t color) {
 }
 
 void apply_brightness() {
-    const std::uint32_t duty = setting_brightness==0 ? 900U : setting_brightness==1 ? 4096U : 8191U;
-    ledc_set_duty(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0,duty);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0);
+    // Cardputer ADV shares GPIO38 with the display power rail. Its backlight
+    // only behaves correctly with the board's 256 Hz / 9-bit / channel 7 PWM.
+    const std::uint32_t brightness = setting_brightness==0 ? 64U :
+                                     setting_brightness==1 ? 160U : 255U;
+    const std::uint32_t duty = brightness << 1;
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_7, duty));
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_7));
 }
 void save_settings() {
     if(!sd_ready) return;
@@ -473,16 +477,12 @@ void render_home() {
 }
 
 void init_display() {
-    gpio_config_t bl = {};
-    bl.pin_bit_mask = 1ULL << kLcdBacklight; bl.mode = GPIO_MODE_OUTPUT;
-    ESP_ERROR_CHECK(gpio_config(&bl));
     gpio_config_t boot = {};
     boot.pin_bit_mask = 1ULL << GPIO_NUM_0;
     boot.mode = GPIO_MODE_INPUT;
     boot.pull_up_en = GPIO_PULLUP_ENABLE;
     boot.pull_down_en = GPIO_PULLDOWN_DISABLE;
     ESP_ERROR_CHECK(gpio_config(&boot));
-    ESP_ERROR_CHECK(gpio_set_level(kLcdBacklight,1));
     spi_bus_config_t bus = {};
     bus.sclk_io_num=kLcdSclk; bus.mosi_io_num=kLcdMosi; bus.miso_io_num=-1;
     bus.quadwp_io_num=-1; bus.quadhd_io_num=-1;
@@ -632,9 +632,25 @@ void poll_keyboard() {
 
 extern "C" void app_main(void) {
     ESP_LOGI(kTag,"Starting MCAI-OS Cardputer ADV");
+    // Set up the ADV backlight before touching the LCD. GPIO38 must not be
+    // driven as a plain HIGH output: it is a shared power/backlight rail.
+    ledc_timer_config_t timer={};
+    timer.speed_mode=LEDC_LOW_SPEED_MODE;
+    timer.duty_resolution=LEDC_TIMER_9_BIT;
+    timer.timer_num=LEDC_TIMER_3;
+    timer.freq_hz=256;
+    timer.clk_cfg=LEDC_AUTO_CLK;
+    ESP_ERROR_CHECK(ledc_timer_config(&timer));
+    ledc_channel_config_t channel={};
+    channel.gpio_num=kLcdBacklight;
+    channel.speed_mode=LEDC_LOW_SPEED_MODE;
+    channel.channel=LEDC_CHANNEL_7;
+    channel.intr_type=LEDC_INTR_DISABLE;
+    channel.timer_sel=LEDC_TIMER_3;
+    channel.duty=256;
+    channel.hpoint=0;
+    ESP_ERROR_CHECK(ledc_channel_config(&channel));
     init_display();
-    ledc_timer_config_t timer={};timer.speed_mode=LEDC_LOW_SPEED_MODE;timer.duty_resolution=LEDC_TIMER_13_BIT;timer.timer_num=LEDC_TIMER_0;timer.freq_hz=5000;timer.clk_cfg=LEDC_AUTO_CLK;ESP_ERROR_CHECK(ledc_timer_config(&timer));
-    ledc_channel_config_t channel={};channel.gpio_num=kLcdBacklight;channel.speed_mode=LEDC_LOW_SPEED_MODE;channel.channel=LEDC_CHANNEL_0;channel.intr_type=LEDC_INTR_DISABLE;channel.timer_sel=LEDC_TIMER_0;channel.duty=4096;channel.hpoint=0;ESP_ERROR_CHECK(ledc_channel_config(&channel));
     init_keyboard();init_sd_card();load_settings();load_note();seed_store();apply_brightness();render_home();
     for(;;){
         const int old_app=active_app,old_sel=selected_app;
