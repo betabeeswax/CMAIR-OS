@@ -9,6 +9,7 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
+#include "esp_sntp.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "nvs_flash.h"
@@ -88,7 +89,7 @@ char viewer_buffer[700] = {};
 bool viewing_file = false;
 char store_names[128][64] = {}; char store_status[128][20] = {}; char store_ids[128][64] = {}; char store_urls[128][256] = {}; char store_hashes[128][65] = {}; size_t store_sizes[128] = {};
 int store_count=0, store_selected=0, store_scroll=0;
-char store_message[40]="ADD WIFI.CFG ON SD"; bool wifi_started=false, catalogue_loaded=false;
+char store_message[40]="ADD WIFI.CFG ON SD"; bool wifi_started=false, catalogue_loaded=false, ntp_started=false;
 char catalogue_buffer[32768]={}; size_t catalogue_length=0;
 bool package_running=false; char package_title[64]=""; char package_subtitle[96]=""; char package_id[64]=""; int package_counter=0, package_increment=1;
 char clock_input[8] = {};
@@ -259,6 +260,17 @@ esp_err_t catalogue_http_event(esp_http_client_event_t* evt) {
         catalogue_length+=(size_t)evt->data_len; catalogue_buffer[catalogue_length]=0;
     }
     return ESP_OK;
+}
+void start_time_sync() {
+    setenv("TZ","EST5EDT,M3.2.0/2,M11.1.0/2",1);
+    tzset();
+    if(!ntp_started) {
+        esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0,"pool.ntp.org");
+        esp_sntp_init();
+        ntp_started=true;
+        ESP_LOGI(kTag,"NTP time sync started");
+    }
 }
 bool connect_wifi_from_sd() {
     if(wifi_started) {
@@ -431,7 +443,7 @@ void render_app() {
     const auto bg=dark_theme?rgb565(11,16,29):rgb565(235,241,247);
     const auto ink=dark_theme?white:rgb565(20,30,45);
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
-    draw_text("MCAI-OS",8,7,1,accent);
+    draw_text("MCAI",8,7,1,accent);draw_text("OS",39,10,1,muted);
     if(active_app==13)draw_text(package_title,100,7,1,ink);else draw_text(kApps[active_app],100,7,1,ink);
     fill_rect(0,19,kWidth,1,rgb565(44,59,78));
     char line[64];
@@ -471,7 +483,7 @@ void render_app() {
         draw_text(store_message,8,110,1,muted);draw_text("UP/DOWN ENTER INFO",8,122,1,muted);break;
     case 6: {
         std::time_t now=std::time(nullptr);std::tm tmv{};localtime_r(&now,&tmv);
-        if(tmv.tm_year<120){draw_text("CLOCK NOT SET",8,33,2,accent);draw_text("TYPE HHMMSS THEN ENTER",8,72,1,ink);draw_text(clock_input,8,91,2,ink);}
+        if(tmv.tm_year<120){draw_text("CLOCK NOT SET",8,33,2,accent);draw_text("CONNECT WIFI FOR AUTO TIME",8,65,1,ink);draw_text("OR TYPE HHMMSS + ENTER",8,82,1,ink);draw_text(clock_input,8,99,2,ink);}
         else {std::snprintf(line,sizeof(line),"%02d:%02d:%02d",tmv.tm_hour,tmv.tm_min,tmv.tm_sec);draw_text("SYSTEM CLOCK",8,30,1,accent);draw_text(line,8,55,3,ink);}
         draw_text("ENTER SET TIME WHEN TYPED",8,111,1,muted);break;}
     case 7: {
@@ -510,7 +522,7 @@ void render_home() {
     const auto white=rgb565(244,248,255), muted=rgb565(150,166,190), selected=rgb565(37,68,75);
     if(active_app>=0) { render_app(); return; }
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
-    fill_rect(0,0,kWidth,3,accent); draw_text("MCAI-OS",8,7,2,accent);
+    fill_rect(0,0,kWidth,3,accent); draw_text("MCAI",8,7,2,accent); draw_text("OS",57,14,1,white);
     draw_text(sd_ready?"SD READY":"NO SD",158,12,1,sd_ready?accent:muted);
     draw_text("APP LAUNCHER",8,29,1,muted);
     const int page=selected_app/kAppsPerPage, pages=(kAppCount+kAppsPerPage-1)/kAppsPerPage;
@@ -631,7 +643,7 @@ void poll_keyboard() {
         if(active_app<0){
             if(is_up(key)||is_left(key))selected_app=(selected_app+kAppCount-1)%kAppCount;
             else if(is_down(key)||is_right(key))selected_app=(selected_app+1)%kAppCount;
-            else if(key==KEY_ENTER){active_app=selected_app;if(active_app==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}if(active_app==1){note_editing=false;refresh_notes();}if(active_app==5){refresh_store();}}
+            else if(key==KEY_ENTER){active_app=selected_app;if(active_app==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}if(active_app==1){note_editing=false;refresh_notes();}if(active_app==5){refresh_store();}if(active_app==6){if(connect_wifi_from_sd())start_time_sync();}}
             continue;
         }
         if(active_app==0){
