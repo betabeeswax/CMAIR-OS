@@ -1,6 +1,7 @@
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 #include "driver/spi_master.h"
+#include "driver/sdspi_host.h"
 #include "esp_err.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
