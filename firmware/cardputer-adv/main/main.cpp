@@ -269,17 +269,17 @@ void poll_keyboard() {
         std::uint8_t event=0;
         if(keyboard_read(0x04,&event)!=ESP_OK || event==0) break;
         // TCA8418 sets bit 7 for RELEASE; bit 7 clear means PRESS.
-        if((event & 0x80) != 0) continue;
+        if((event & 0x80) == 0) continue;
         const std::uint8_t key = event & 0x7F;
         // ADV matrix values are decimal row/column scan codes, not hex key IDs.
         // Cardputer navigation keys from the ADV 4x14 matrix: comma=44, semicolon=53, period=48, slash=54.
         if(active_app >= 0) {
             if(key==65) { active_app=-1; file_scroll=0; }
-            else if(key==53 || key==44) { if(active_app==0 && file_scroll>0) --file_scroll; else if(active_app==2) --calc_value; else if(active_app==3 && setting_brightness>0) --setting_brightness; }
-            else if(key==48 || key==54) { if(active_app==0) ++file_scroll; else if(active_app==2) ++calc_value; else if(active_app==3 && setting_brightness<2) ++setting_brightness; }
+            else if(key==53 || key==54) { if(active_app==0 && file_scroll>0) --file_scroll; else if(active_app==2) --calc_value; else if(active_app==3 && setting_brightness>0) --setting_brightness; }
+            else if(key==58 || key==64) { if(active_app==0) ++file_scroll; else if(active_app==2) ++calc_value; else if(active_app==3 && setting_brightness<2) ++setting_brightness; }
             else if(key==67) {
                 if(active_app==2) calc_value=0;
-                else if(active_app==1 && sd_ready) { mkdir("/sdcard/MCAI-OS",0775); mkdir("/sdcard/MCAI-OS/notes",0775); FILE* note=std::fopen("/sdcard/MCAI-OS/notes/Welcome.txt","a"); if(note) { std::fputs("Welcome to MCAI-OS notes.\\n",note); std::fclose(note); } }
+                else if(active_app==1 && sd_ready) { mkdir("/sdcard/MCAI-OS",0775); mkdir("/sdcard/MCAI-OS/notes",0775); FILE* note=std::fopen("/sdcard/MCAI-OS/notes/Welcome.txt","a"); if(note) { std::fputs("Welcome to MCAI-OS notes.\n",note); std::fclose(note); } }
             }
         } else if(key==53 || key==44) selected_app=(selected_app+kAppCount-1)%kAppCount;
         else if(key==48 || key==54) selected_app=(selected_app+1)%kAppCount;
