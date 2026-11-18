@@ -617,9 +617,9 @@ void render_app() {
         draw_text(store_message,8,110,1,muted);draw_text("UP/DOWN ENTER INFO",8,122,1,muted);break;
     case 6: {
         std::time_t now=std::time(nullptr);std::tm tmv{};localtime_r(&now,&tmv);
-        if(tmv.tm_year<120){draw_text("CLOCK NOT SET",8,33,2,accent);draw_text("CONNECT WIFI FOR AUTO TIME",8,65,1,ink);draw_text("OR TYPE HHMMSS + ENTER",8,82,1,ink);draw_text(clock_input,8,99,2,ink);}
+        if(tmv.tm_year<120){draw_text("TIME NOT SYNCED",8,33,2,accent);draw_text("SET WIFI IN SETTINGS",8,67,1,ink);}
         else {std::snprintf(line,sizeof(line),"%02d:%02d:%02d",tmv.tm_hour,tmv.tm_min,tmv.tm_sec);draw_text("SYSTEM CLOCK",8,30,1,accent);draw_text(line,8,55,3,ink);}
-        draw_text("ENTER SET TIME WHEN TYPED",8,111,1,muted);break;}
+        draw_text("ESC: BACK",8,111,1,muted);break;}
     case 7: {
         int left=timer_seconds;if(timer_running)left=(int)std::max<std::int64_t>(0,(timer_end_us-esp_timer_get_time()+999999)/1000000);
         std::snprintf(line,sizeof(line),"%02d:%02d",left/60,left%60);draw_text("COUNTDOWN TIMER",8,27,1,accent);draw_text(line,8,49,3,ink);
@@ -787,7 +787,7 @@ void play_tone(std::uint32_t frequency,std::uint32_t duration_ms) {
         const size_t n=std::min((std::size_t)chunk,(std::size_t)(total-base));
         for(size_t i=0;i<n;i++) {
             const float phase=6.28318530718f*(float)frequency*(float)(base+i)/(float)rate;
-            const std::int16_t sample=(std::int16_t)(4200.0f*std::sinf(phase));
+            const std::int16_t sample=(std::int16_t)(4200.0f*std::sin(phase));
             samples[i*2]=sample;samples[i*2+1]=sample;
         }
         size_t written=0;
@@ -933,9 +933,7 @@ void poll_keyboard() {
             if(is_back(key)){package_running=false;active_app=5;}
             else if(key==KEY_ENTER){package_counter=std::min(999999,package_counter+package_increment);}
         } else if(active_app==6){
-            if(key==KEY_BACKSPACE){if(clock_len>0)clock_input[--clock_len]=0;else active_app=-1;}
-            else if(ch>='0'&&ch<='9'&&clock_len<6){clock_input[clock_len++]=ch;clock_input[clock_len]=0;}
-            else if(key==KEY_ENTER&&clock_len==6){int hh=(clock_input[0]-'0')*10+clock_input[1]-'0',mm=(clock_input[2]-'0')*10+clock_input[3]-'0',ss=(clock_input[4]-'0')*10+clock_input[5]-'0';if(hh<24&&mm<60&&ss<60){struct timeval tv{};tv.tv_sec=(std::time(nullptr)/86400)*86400+hh*3600+mm*60+ss;settimeofday(&tv,nullptr);clock_len=0;clock_input[0]=0;}}
+            if(key==KEY_ESC||key==KEY_BACKSPACE)active_app=-1;
         } else if(active_app==7){
             if(is_up(key)||is_left(key)){timer_seconds=std::max(0,timer_seconds-10);if(timer_running)timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;}
             else if(is_down(key)||is_right(key)){timer_seconds=std::min(5999,timer_seconds+10);if(timer_running)timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;}
