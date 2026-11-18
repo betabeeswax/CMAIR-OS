@@ -565,11 +565,10 @@ void render_app() {
         draw_text("NUMBERS + - * / ( )",8,88,1,muted);draw_text("ENTER = RESULT",8,105,1,muted);break;
     case 3:
         if(bluetooth_screen){
-            draw_text("BLUETOOTH SCAN",8,25,1,accent);
-            draw_text(ble_scan_active?"SCANNING...":"SCAN COMPLETE",8,39,1,muted);
-            for(int i=0;i<5;i++){int ix=ble_device_scroll+i;if(ix>=ble_device_count)break;draw_text(ble_devices[ix],10,55+i*12,1,ix==ble_device_scroll?accent:ink);}
-            if(ble_device_count==0)draw_text("NO DEVICES FOUND YET",8,68,1,ink);
-            draw_text("ENTER RESCAN  ESC BACK",8,119,1,muted);
+            draw_text("BLUETOOTH",8,25,1,accent);
+            draw_text("BLE NOT READY IN THIS BUILD",8,43,1,ink);
+            draw_text("GAP LINKING NEEDS REPAIR",8,59,1,muted);
+            draw_text("ESC BACK",8,119,1,muted);
         } else if(wifi_setup_step==1||wifi_setup_step==2){
             draw_text(wifi_setup_step==1?"WIFI NETWORK NAME":"WIFI PASSWORD",8,29,1,accent);
             if(wifi_setup_step==1)draw_text(wifi_ssid_input,8,52,1,ink);
@@ -975,6 +974,8 @@ extern "C" void app_main(void) {
     channel.hpoint=0;
     ESP_ERROR_CHECK(ledc_channel_config(&channel));
     init_display();
+    draw_mcaI_logo_splash();
+    vTaskDelay(pdMS_TO_TICKS(1100));
     init_keyboard();init_audio();init_sd_card();load_settings();seed_store();apply_brightness();render_home();play_tone(660,90);
     for(;;){
         const int old_app=active_app,old_sel=selected_app;
