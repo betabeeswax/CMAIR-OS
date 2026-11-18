@@ -1,3 +1,5 @@
+![MCAI OS logo](assets/mcai-os-logo.svg)
+
 # MCAI-OS
 
 [🌐 Open the MCAI-OS Easy Flasher](https://betabeeswax.github.io/MCAI-OS/) · [📦 View the repository](https://github.com/betabeeswax/MCAI-OS) · [⬇️ Firmware releases](https://github.com/betabeeswax/MCAI-OS/releases)
