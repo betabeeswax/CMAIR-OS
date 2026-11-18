@@ -462,6 +462,7 @@ int store_builtin_index(const char* id) {
     if(std::strcmp(id,"storage-manager")==0)return 9;
     if(std::strcmp(id,"diagnostics")==0)return 10;
     if(std::strcmp(id,"snake")==0)return 11;
+    if(std::strcmp(id,"about")==0)return 12;
     return -1;
 }
 bool package_installed(const char* id) {
