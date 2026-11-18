@@ -215,12 +215,12 @@ void poll_keyboard() {
         if((event & 0x80) != 0) continue;
         const std::uint8_t key = event & 0x7F;
         // ADV matrix values are decimal row/column scan codes, not hex key IDs.
-        // Cardputer navigation keys: comma=44, semicolon=51, period=54, slash=64.
+        // Cardputer navigation keys from the ADV 4x14 matrix: comma=44, semicolon=53, period=48, slash=54.
         if(active_app >= 0) {
             if(key == 65 || key == 67) active_app = -1; // Backspace or Enter returns to launcher.
-        } else if(key == 51 || key == 44) {
+        } else if(key == 53 || key == 44) {
             selected_app = (selected_app + kAppCount - 1) % kAppCount;
-        } else if(key == 54 || key == 64) {
+        } else if(key == 48 || key == 54) {
             selected_app = (selected_app + 1) % kAppCount;
         } else if(key == 67) {
             active_app = selected_app;
