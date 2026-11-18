@@ -6,6 +6,12 @@
 #include "esp_err.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_netif.h"
+#include "esp_http_client.h"
+#include "nvs_flash.h"
+#include "cJSON.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
@@ -65,9 +71,10 @@ bool file_is_dir[32] = {};
 int file_count = 0, file_selected = 0;
 char viewer_buffer[700] = {};
 bool viewing_file = false;
-char store_names[24][64] = {};
-int store_count = 0, store_selected = 0;
-char store_message[40] = "PRESS ENTER TO INSTALL";
+char store_names[106][64] = {}; char store_status[106][20] = {};
+int store_count=0, store_selected=0, store_scroll=0;
+char store_message[40]="ADD WIFI.CFG ON SD"; bool wifi_started=false, catalogue_loaded=false;
+char catalogue_buffer[32768]={}; size_t catalogue_length=0;
 char clock_input[8] = {};
 int clock_len = 0;
 int timer_seconds = 60;
@@ -200,32 +207,74 @@ void refresh_files() {
     }
     closedir(d);
 }
+esp_err_t catalogue_http_event(esp_http_client_event_t* evt) {
+    if(evt->event_id==HTTP_EVENT_ON_DATA && evt->data && evt->data_len>0 &&
+       catalogue_length+(size_t)evt->data_len<sizeof(catalogue_buffer)-1) {
+        std::memcpy(catalogue_buffer+catalogue_length,evt->data,(size_t)evt->data_len);
+        catalogue_length+=(size_t)evt->data_len; catalogue_buffer[catalogue_length]=0;
+    }
+    return ESP_OK;
+}
+bool connect_wifi_from_sd() {
+    if(wifi_started) return true;
+    FILE* f=std::fopen("/sdcard/MCAI-OS/wifi.cfg","r");
+    if(!f){std::snprintf(store_message,sizeof(store_message),"ADD WIFI.CFG ON SD");return false;}
+    char ssid[33]={},password[65]={};
+    bool ok=std::fgets(ssid,sizeof(ssid),f)&&std::fgets(password,sizeof(password),f); std::fclose(f);
+    auto trim=[](char* s){size_t n=std::strlen(s);while(n&&(s[n-1]=='\n'||s[n-1]=='\r'))s[--n]=0;};
+    trim(ssid);trim(password);
+    if(!ok||!ssid[0]){std::snprintf(store_message,sizeof(store_message),"INVALID WIFI.CFG");return false;}
+    esp_err_t e=nvs_flash_init();
+    if(e==ESP_ERR_NVS_NO_FREE_PAGES||e==ESP_ERR_NVS_NEW_VERSION_FOUND){nvs_flash_erase();e=nvs_flash_init();}
+    if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
+    e=esp_netif_init();if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
+    e=esp_event_loop_create_default();if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
+    esp_netif_create_default_wifi_sta();
+    wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();
+    e=esp_wifi_init(&init);if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
+    wifi_config_t cfg={};
+    std::snprintf((char*)cfg.sta.ssid,sizeof(cfg.sta.ssid),"%s",ssid);
+    std::snprintf((char*)cfg.sta.password,sizeof(cfg.sta.password),"%s",password);
+    cfg.sta.threshold.authmode=WIFI_AUTH_OPEN;
+    if(esp_wifi_set_mode(WIFI_MODE_STA)!=ESP_OK||esp_wifi_set_config(WIFI_IF_STA,&cfg)!=ESP_OK||
+       esp_wifi_start()!=ESP_OK||esp_wifi_connect()!=ESP_OK){std::snprintf(store_message,sizeof(store_message),"WIFI START FAILED");return false;}
+    wifi_started=true;
+    for(int i=0;i<80;i++){wifi_ap_record_t ap{};if(esp_wifi_sta_get_ap_info(&ap)==ESP_OK)return true;vTaskDelay(pdMS_TO_TICKS(250));}
+    std::snprintf(store_message,sizeof(store_message),"WIFI CONNECT TIMEOUT");return false;
+}
 void refresh_store() {
-    store_count=0;store_selected=0;
-    DIR* d=opendir("/sdcard/MCAI-OS/store");if(!d)return;
-    struct dirent* e;while((e=readdir(d))!=nullptr&&store_count<24){
-        const size_t n=std::strlen(e->d_name);
-        if(n>6&&std::strcmp(e->d_name+n-6,".mcapp")==0){std::snprintf(store_names[store_count++],64,"%s",e->d_name);}
-    }closedir(d);
+    store_count=0;store_selected=0;store_scroll=0;catalogue_loaded=false;catalogue_length=0;catalogue_buffer[0]=0;
+    if(!connect_wifi_from_sd())return;
+    esp_http_client_config_t cfg={};
+    cfg.url="https://raw.githubusercontent.com/betabeeswax/MCAI-OS-APPS/main/catalogue.json";
+    cfg.event_handler=catalogue_http_event;cfg.timeout_ms=15000;cfg.buffer_size=2048;
+    esp_http_client_handle_t client=esp_http_client_init(&cfg);
+    if(!client){std::snprintf(store_message,sizeof(store_message),"HTTP INIT FAILED");return;}
+    esp_err_t result=esp_http_client_perform(client);
+    int status=esp_http_client_get_status_code(client);esp_http_client_cleanup(client);
+    if(result!=ESP_OK||status!=200){std::snprintf(store_message,sizeof(store_message),"GITHUB FETCH FAILED");return;}
+    cJSON* root=cJSON_Parse(catalogue_buffer);
+    cJSON* apps=root?cJSON_GetObjectItemCaseSensitive(root,"apps"):nullptr;
+    if(!cJSON_IsArray(apps)){if(root)cJSON_Delete(root);std::snprintf(store_message,sizeof(store_message),"BAD CATALOGUE JSON");return;}
+    cJSON* app=nullptr;
+    cJSON_ArrayForEach(app,apps){
+        if(store_count>=106)break;
+        cJSON* name=cJSON_GetObjectItemCaseSensitive(app,"name");
+        cJSON* status_item=cJSON_GetObjectItemCaseSensitive(app,"status");
+        if(!cJSON_IsString(name))continue;
+        std::snprintf(store_names[store_count],64,"%s",name->valuestring);
+        std::snprintf(store_status[store_count],20,"%s",cJSON_IsString(status_item)?status_item->valuestring:"unknown");
+        ++store_count;
+    }
+    cJSON_Delete(root);catalogue_loaded=true;
+    std::snprintf(store_message,sizeof(store_message),"GITHUB: %d APPS",store_count);
 }
 void install_store_package() {
-    if(!sd_ready||store_count==0)return;
-    mkdir("/sdcard/MCAI-OS/apps",0775);
-    char src[220],dst[220];std::snprintf(src,sizeof(src),"/sdcard/MCAI-OS/store/%s",store_names[store_selected]);
-    std::snprintf(dst,sizeof(dst),"/sdcard/MCAI-OS/apps/%s",store_names[store_selected]);
-    FILE* in=std::fopen(src,"r");FILE* out=std::fopen(dst,"w");
-    if(!in||!out){if(in)std::fclose(in);if(out)std::fclose(out);std::snprintf(store_message,sizeof(store_message),"INSTALL FAILED");return;}
-    char line[128];bool valid=false;while(std::fgets(line,sizeof(line),in)){if(std::strncmp(line,"name=",5)==0||std::strncmp(line,"text=",5)==0)valid=true;std::fputs(line,out);}
-    std::fclose(in);std::fclose(out);
-    std::snprintf(store_message,sizeof(store_message),valid?"INSTALLED TO SD":"BAD PACKAGE");
-    if(!valid)std::remove(dst);
+    if(!catalogue_loaded||store_count==0)return;
+    if(std::strcmp(store_status[store_selected],"available")!=0){std::snprintf(store_message,sizeof(store_message),"NOT RELEASED YET");return;}
+    std::snprintf(store_message,sizeof(store_message),"PACKAGE NOT PUBLISHED");
 }
-void seed_store() {
-    if(!sd_ready)return;
-    mkdir("/sdcard/MCAI-OS",0775);mkdir("/sdcard/MCAI-OS/store",0775);
-    const char* path="/sdcard/MCAI-OS/store/hello.mcapp";
-    if(access(path,F_OK)!=0){FILE* f=std::fopen(path,"w");if(f){std::fputs("name=Hello App\ntext=Welcome to MCAI-OS!\naction=counter\n",f);std::fclose(f);}}
-}
+void seed_store() { /* Store entries are fetched from the official GitHub catalogue. */ }
 void open_selected_file() {
     if(file_count==0)return;
     char path[240];std::snprintf(path,sizeof(path),"%s/%s",current_dir,file_names[file_selected]);
@@ -262,10 +311,10 @@ void render_app() {
         std::snprintf(line,sizeof(line),"HEAP %lu KB",(unsigned long)(esp_get_free_heap_size()/1024));draw_text(line,8,66,1,ink);
         draw_text("M5STACK CARDPUTER ADV",8,84,1,accent);break;
     case 5:
-        draw_text("SD PACKAGE STORE",8,25,1,accent);
-        draw_text(sd_ready?"SOURCE: SD /MCAI-OS/STORE":"INSERT SD CARD",8,41,1,ink);
-        for(int i=0;i<4;i++){int ix=store_selected+i;if(ix>=store_count)break;draw_text(store_names[ix],8,57+i*13,1,ix==store_selected?accent:ink);}
-        draw_text(store_message,8,111,1,muted);break;
+        draw_text("GITHUB APP STORE",8,25,1,accent);
+        draw_text(catalogue_loaded?"MCAI-OS-APPS / MAIN":"GITHUB CATALOGUE",8,39,1,ink);
+        for(int i=0;i<4;i++){int ix=store_scroll+i;if(ix>=store_count)break;char row[40];std::snprintf(row,sizeof(row),"%c %.20s %s",ix==store_selected?'>':' ',store_names[ix],std::strcmp(store_status[ix],"available")==0?"READY":"PLANNED");draw_text(row,8,54+i*13,1,ix==store_selected?accent:ink);}
+        draw_text(store_message,8,110,1,muted);draw_text("UP/DOWN ENTER INFO",8,122,1,muted);break;
     case 6: {
         std::time_t now=std::time(nullptr);std::tm tmv{};localtime_r(&now,&tmv);
         if(tmv.tm_year<120){draw_text("CLOCK NOT SET",8,33,2,accent);draw_text("TYPE HHMMSS THEN ENTER",8,72,1,ink);draw_text(clock_input,8,91,2,ink);}
@@ -416,7 +465,7 @@ void poll_keyboard() {
         if(active_app<0){
             if(key==53||key==44)selected_app=(selected_app+kAppCount-1)%kAppCount;
             else if(key==48||key==54)selected_app=(selected_app+1)%kAppCount;
-            else if(key==67){active_app=selected_app;if(active_app==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}if(active_app==1)load_note();if(active_app==5){seed_store();refresh_store();}}
+            else if(key==67){active_app=selected_app;if(active_app==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}if(active_app==1)load_note();if(active_app==5){refresh_store();}}
             continue;
         }
         if(active_app==0){
@@ -439,8 +488,8 @@ void poll_keyboard() {
             else if(key==67){dark_theme=!dark_theme;save_settings();}
         } else if(active_app==5){
             if(key==65)active_app=-1;
-            else if(key==53||key==44){if(store_selected>0)--store_selected;}
-            else if(key==48||key==54){if(store_selected+1<store_count)++store_selected;}
+            else if(key==53||key==44){if(store_selected>0)--store_selected;if(store_selected<store_scroll)store_scroll=store_selected;}
+            else if(key==48||key==54){if(store_selected+1<store_count)++store_selected;if(store_selected>=store_scroll+4)store_scroll=store_selected-3;}
             else if(key==67)install_store_package();
         } else if(active_app==6){
             if(key==65){if(clock_len>0)clock_input[--clock_len]=0;else active_app=-1;}
