@@ -217,6 +217,7 @@ void create_note() {
     do {std::snprintf(name,sizeof(name),"NOTE-%03d.txt",number++);char full[100];std::snprintf(full,sizeof(full),"/sdcard/MCAI-OS/notes/%s",name);struct stat st{};if(stat(full,&st)!=0)break;} while(number<1000);
     std::snprintf(note_filename,sizeof(note_filename),"/sdcard/MCAI-OS/notes/%s",name);
     note_buffer[0]=0;note_length=0;note_editing=true;note_scroll=0;save_note();refresh_notes();
+    for(int i=0;i<note_count;i++)if(std::strcmp(note_files[i],name)==0){note_selected=i;break;}
 }
 bool eval_expr(const char*& p,double& out);
 bool eval_factor(const char*& p,double& out) {
@@ -459,7 +460,8 @@ void render_app() {
             draw_text("ENTER OPEN  N NEW NOTE",8,113,1,muted);
             draw_text(sd_ready?"SAVED TO SD":"INSERT SD CARD",8,124,1,muted);
         } else {
-            draw_text(note_files[note_selected],8,25,1,accent);
+            const char* note_title=std::strrchr(note_filename,'/');
+            draw_text(note_title?note_title+1:note_filename,8,25,1,accent);
             for(int i=0;i<6;i++){int pos=(note_scroll+i)*35;if(pos>=note_length)break;char row[36]={};std::strncpy(row,note_buffer+pos,35);draw_text(row,8,40+i*12,1,ink);}
             draw_text("TYPE TO EDIT  BKSP DELETE",8,113,1,muted);
             draw_text("ESC SAVE AND BACK",8,124,1,muted);
@@ -506,7 +508,7 @@ void render_app() {
         draw_text("ENTER: +1",8,94,1,ink);draw_text("BACKSPACE: STORE",8,111,1,muted);break;
     }
     case 11:
-        draw_text("SNAKE - WASD TO MOVE",8,25,1,accent);
+        draw_text("SNAKE - ARROWS TO MOVE",8,25,1,accent);
         if(!game_started){draw_text("ENTER TO START",8,58,1,ink);draw_text("EAT FOOD / AVOID WALLS",8,78,1,muted);}
         else {for(int i=0;i<snake_len;i++)fill_rect(16+snake_x[i]*9,38+snake_y[i]*8,7,6,accent);fill_rect(16+food_x*9,38+food_y*8,7,6,rgb565(255,100,100));std::snprintf(line,sizeof(line),"SCORE %d",game_score);draw_text(line,8,116,1,ink);if(game_over)draw_text("GAME OVER - ENTER",90,116,1,accent);}
         break;
@@ -662,8 +664,8 @@ void poll_keyboard() {
             } else {
                 if(key==KEY_ESC){save_note();note_editing=false;refresh_notes();}
                 else if(key==KEY_BACKSPACE){if(note_length>0){--note_length;note_buffer[note_length]=0;save_note();}}
-                else if(key==KEY_ENTER&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]='\n';note_buffer[note_length]=0;save_note();}
-                else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;save_note();}
+                else if(key==KEY_ENTER&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]='\n';note_buffer[note_length]=0;note_scroll=std::max(0,note_length/35-5);save_note();}
+                else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;note_scroll=std::max(0,note_length/35-5);save_note();}
             }
         } else if(active_app==2){
             if(key==KEY_BACKSPACE){if(calc_length>0)calc_buffer[--calc_length]=0;}
