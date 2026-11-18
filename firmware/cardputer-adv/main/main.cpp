@@ -27,7 +27,7 @@ constexpr gpio_num_t kLcdSclk = GPIO_NUM_36;
 constexpr gpio_num_t kLcdCs = GPIO_NUM_37;
 
 esp_lcd_panel_handle_t panel = nullptr;
-std::uint16_t framebuffer[kWidth * kHeight];
+alignas(4) std::uint16_t framebuffer[kWidth * kHeight];
 
 constexpr std::uint16_t rgb565(std::uint8_t r, std::uint8_t g, std::uint8_t b) {
     return static_cast<std::uint16_t>(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
