@@ -196,7 +196,8 @@ void draw_mcaI_logo_splash() {
         fill_round_rect(x+2,7,55,43,8,black);
         fill_round_rect(x,4,55,43,8,black);
         fill_round_rect(x+2,6,51,38,7,white);
-        char letter[2]={keys[i],0};\n        draw_text(letter,x+14,14,4,black);
+        char letter[2]={keys[i],0};
+        draw_text(letter,x+14,14,4,black);
     }
     fill_rect(0,54,240,81,black);
     fill_rect(2,56,236,77,frame);
