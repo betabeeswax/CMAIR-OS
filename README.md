@@ -108,7 +108,4 @@ Your Wi-Fi name
 Your Wi-Fi password
 ```
 
-The current App Store integration downloads and displays the repository catalogue.
-An entry marked `planned` is not an installable app. Package downloading and the
-sandboxed third-party app runtime are still being developed; the firmware will
-not claim an app is installed until that runtime and a compatible package exist.
+The App Store downloads the repository catalogue and supports verified `mcai-app-v1` JSON packages. It checks the package's HTTPS response, exact size, SHA-256 digest, app ID and Cardputer target before saving it under `/sdcard/MCAI-OS/apps/`. The first package, Tap Counter, is marked `experimental` until it is tested on physical Cardputer ADV hardware. The initial runtime is deliberately limited to declarative counter apps; it does not execute downloaded native code. Entries marked `planned` cannot be installed.
