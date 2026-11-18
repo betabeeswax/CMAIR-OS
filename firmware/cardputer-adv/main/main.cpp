@@ -119,7 +119,7 @@ void render_app() {
             if(!dir) draw_text("CANNOT OPEN SD ROOT",8,50,1,white);
             else { struct dirent* ent; int row=0, seen=0;
                 while((ent=readdir(dir))!=nullptr) { if(ent->d_name[0]=='.') continue; if(seen++<file_scroll) continue; if(row>=5) break; draw_text(ent->d_name,8,40+row*14,1,white); ++row; }
-                if(row==0) draw_text("SD CARD IS EMPTY",8,50,1,white); closedir(dir); }
+                if(row==0) { draw_text("SD CARD IS EMPTY",8,50,1,white); } closedir(dir); }
         }
         draw_text("UP/DOWN SCROLL",8,111,1,muted);
     } else if(active_app==1) {
@@ -176,7 +176,7 @@ void render_home() {
     const int page=selected_app/kAppsPerPage, pages=(kAppCount+kAppsPerPage-1)/kAppsPerPage;
     for(int row=0;row<kAppsPerPage;row++) { const int i=page*kAppsPerPage+row; if(i>=kAppCount) break;
         const int y=43+row*15; fill_rect(7,y,226,13,i==selected_app?selected:card);
-        if(i==selected_app) fill_rect(7,y,3,13,accent); draw_text(kApps[i],15,y+3,1,i==selected_app?accent:white); }
+        if(i==selected_app) { fill_rect(7,y,3,13,accent); } draw_text(kApps[i],15,y+3,1,i==selected_app?accent:white); }
     char p[20]; std::snprintf(p,sizeof(p),"PAGE %d/%d",page+1,pages); draw_text(p,8,122,1,accent);
     draw_text("UP/DOWN MOVE ENTER OPEN",85,122,1,muted);
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
