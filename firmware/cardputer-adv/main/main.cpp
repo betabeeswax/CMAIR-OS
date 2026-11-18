@@ -74,6 +74,10 @@ int calc_length = 0;
 int file_scroll = 0;
 char note_buffer[512] = {};
 int note_length = 0, note_scroll = 0;
+char note_files[16][40] = {};
+int note_count=0, note_selected=0;
+char note_filename[64] = {};
+bool note_editing=false;
 char last_char = '-';
 unsigned keypress_count = 0;
 char current_dir[160] = "/sdcard";
@@ -177,17 +181,41 @@ void load_settings() {
     FILE* f=std::fopen("/sdcard/MCAI-OS/settings.cfg","r");
     if(f){int b=1,t=1;if(std::fscanf(f,"%d %d",&b,&t)>=1){setting_brightness=std::max(0,std::min(2,b));dark_theme=t!=0;}std::fclose(f);}
 }
-void save_note() {
+void refresh_notes() {
+    note_count=0; note_selected=0;
     if(!sd_ready) return;
     mkdir("/sdcard/MCAI-OS",0775);
-    FILE* f=std::fopen("/sdcard/MCAI-OS/notes.txt","w");
+    mkdir("/sdcard/MCAI-OS/notes",0775);
+    DIR* d=opendir("/sdcard/MCAI-OS/notes"); if(!d) return;
+    struct dirent* e;
+    while((e=readdir(d))!=nullptr && note_count<16) {
+        const size_t n=std::strlen(e->d_name);
+        if(n<5 || std::strcmp(e->d_name+n-4,".txt")!=0) continue;
+        std::snprintf(note_files[note_count],sizeof(note_files[note_count]),"%.39s",e->d_name);
+        ++note_count;
+    }
+    closedir(d);
+}
+void save_note() {
+    if(!sd_ready || !note_filename[0]) return;
+    FILE* f=std::fopen(note_filename,"w");
     if(f){std::fwrite(note_buffer,1,note_length,f);std::fclose(f);}
 }
-void load_note() {
+void open_note(int index) {
+    if(index<0 || index>=note_count) return;
+    std::snprintf(note_filename,sizeof(note_filename),"/sdcard/MCAI-OS/notes/%.39s",note_files[index]);
     note_length=0; note_buffer[0]=0;
-    if(!sd_ready) return;
-    FILE* f=std::fopen("/sdcard/MCAI-OS/notes.txt","r");
+    FILE* f=std::fopen(note_filename,"r");
     if(f){note_length=(int)std::fread(note_buffer,1,sizeof(note_buffer)-1,f);note_buffer[note_length]=0;std::fclose(f);}
+    note_editing=true; note_scroll=0;
+}
+void create_note() {
+    if(!sd_ready){std::snprintf(note_filename,sizeof(note_filename),"");return;}
+    mkdir("/sdcard/MCAI-OS",0775); mkdir("/sdcard/MCAI-OS/notes",0775);
+    char name[40]; int number=1;
+    do {std::snprintf(name,sizeof(name),"NOTE-%03d.txt",number++);char full[100];std::snprintf(full,sizeof(full),"/sdcard/MCAI-OS/notes/%s",name);struct stat st{};if(stat(full,&st)!=0)break;} while(number<1000);
+    std::snprintf(note_filename,sizeof(note_filename),"/sdcard/MCAI-OS/notes/%s",name);
+    note_buffer[0]=0;note_length=0;note_editing=true;note_scroll=0;save_note();refresh_notes();
 }
 bool eval_expr(const char*& p,double& out);
 bool eval_factor(const char*& p,double& out) {
@@ -413,9 +441,18 @@ void render_app() {
         else {draw_text(current_dir,8,25,1,accent);for(int i=0;i<5;i++){int ix=file_scroll+i;if(ix>=file_count)break;std::snprintf(line,sizeof(line),"%c %.20s",file_is_dir[ix]?'>':' ',file_names[ix]);draw_text(line,8,42+i*14,1,ix==file_selected?accent:ink);}draw_text("UP/DOWN SELECT ENTER OPEN",8,112,1,muted);}
         break;
     case 1:
-        draw_text("NOTES - AUTO SAVES",8,25,1,accent);
-        for(int i=0;i<5;i++){int pos=(note_scroll+i)*35;if(pos>=note_length)break;char row[36]={};std::strncpy(row,note_buffer+pos,35);draw_text(row,8,43+i*13,1,ink);}
-        draw_text(sd_ready?"SAVED ON SD":"NO SD - NOT SAVED",8,112,1,muted);break;
+        if(!note_editing){
+            draw_text("MY NOTES",8,25,1,accent);
+            for(int i=0;i<6;i++){int ix=note_scroll+i;if(ix>=note_count)break;draw_text(note_files[ix],12,42+i*12,1,ix==note_selected?accent:ink);}
+            draw_text("ENTER OPEN  N NEW NOTE",8,113,1,muted);
+            draw_text(sd_ready?"SAVED TO SD":"INSERT SD CARD",8,124,1,muted);
+        } else {
+            draw_text(note_files[note_selected],8,25,1,accent);
+            for(int i=0;i<6;i++){int pos=(note_scroll+i)*35;if(pos>=note_length)break;char row[36]={};std::strncpy(row,note_buffer+pos,35);draw_text(row,8,40+i*12,1,ink);}
+            draw_text("TYPE TO EDIT  BKSP DELETE",8,113,1,muted);
+            draw_text("ESC SAVE AND BACK",8,124,1,muted);
+        }
+        break;
     case 2:
         draw_text("CALCULATOR",8,27,1,accent);draw_text(calc_buffer,8,49,2,ink);
         draw_text("NUMBERS + - * / ( )",8,88,1,muted);draw_text("ENTER = RESULT",8,105,1,muted);break;
@@ -594,7 +631,7 @@ void poll_keyboard() {
         if(active_app<0){
             if(is_up(key)||is_left(key))selected_app=(selected_app+kAppCount-1)%kAppCount;
             else if(is_down(key)||is_right(key))selected_app=(selected_app+1)%kAppCount;
-            else if(key==KEY_ENTER){active_app=selected_app;if(active_app==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}if(active_app==1)load_note();if(active_app==5){refresh_store();}}
+            else if(key==KEY_ENTER){active_app=selected_app;if(active_app==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}if(active_app==1){note_editing=false;refresh_notes();}if(active_app==5){refresh_store();}}
             continue;
         }
         if(active_app==0){
@@ -604,9 +641,18 @@ void poll_keyboard() {
             else if(is_down(key)||is_right(key)){if(file_selected+1<file_count)++file_selected;if(file_selected>=file_scroll+5)file_scroll=file_selected-4;}
             else if(key==KEY_ENTER)open_selected_file();
         } else if(active_app==1){
-            if(key==KEY_BACKSPACE){if(note_length>0){--note_length;note_buffer[note_length]=0;save_note();}}
-            else if(key==KEY_ENTER&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]='\n';note_buffer[note_length]=0;save_note();}
-            else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;save_note();}
+            if(!note_editing){
+                if(is_up(key)||is_left(key)){if(note_selected>0)--note_selected;if(note_selected<note_scroll)note_scroll=note_selected;}
+                else if(is_down(key)||is_right(key)){if(note_selected+1<note_count)++note_selected;if(note_selected>=note_scroll+6)note_scroll=note_selected-5;}
+                else if(key==KEY_ENTER)open_note(note_selected);
+                else if(ch=='n'||ch=='N')create_note();
+                else if(key==KEY_BACKSPACE||key==KEY_ESC)active_app=-1;
+            } else {
+                if(key==KEY_ESC){save_note();note_editing=false;refresh_notes();}
+                else if(key==KEY_BACKSPACE){if(note_length>0){--note_length;note_buffer[note_length]=0;save_note();}}
+                else if(key==KEY_ENTER&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]='\n';note_buffer[note_length]=0;save_note();}
+                else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;save_note();}
+            }
         } else if(active_app==2){
             if(key==KEY_BACKSPACE){if(calc_length>0)calc_buffer[--calc_length]=0;}
             else if(key==KEY_ENTER)calculate();
@@ -678,7 +724,7 @@ extern "C" void app_main(void) {
         const bool boot_pressed=gpio_get_level(GPIO_NUM_0)==0;
         if(boot_pressed&&!boot_button_was_pressed){
             if(active_app>=0){if(active_app==1)save_note();active_app=-1;viewing_file=false;}
-            else {active_app=selected_app;if(active_app==0){std::strcpy(current_dir,"/sdcard");refresh_files();}if(active_app==1)load_note();if(active_app==5){seed_store();refresh_store();}}
+            else {active_app=selected_app;if(active_app==0){std::strcpy(current_dir,"/sdcard");refresh_files();}if(active_app==1){note_editing=false;refresh_notes();}if(active_app==5){seed_store();refresh_store();}}
         }
         boot_button_was_pressed=boot_pressed;
         const std::int64_t now=esp_timer_get_time();
@@ -692,7 +738,7 @@ extern "C" void app_main(void) {
             if(snake_x[0]==food_x&&snake_y[0]==food_y){if(snake_len<47)++snake_len;++game_score;food_x=(food_x+7)%23;food_y=(food_y+3)%9;}
         }
         if(old_app!=active_app||old_sel!=selected_app||active_app==6||active_app==7||active_app==11||active_app==0||active_app==5||active_app==8)render_home();
-        if(active_app==1&&note_length>0&&note_length%24==0)save_note();
+        if(active_app==1&&note_editing&&note_length>0&&note_length%24==0)save_note();
         vTaskDelay(pdMS_TO_TICKS(60));
     }
 }
