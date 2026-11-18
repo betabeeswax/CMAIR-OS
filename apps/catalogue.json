@@ -2,7 +2,7 @@
   "project": "CMAIR-OS",
   "meaning": "Cardputer MStack But AI",
   "catalogueVersion": 1,
-  "totalApps": 106,
+  "totalApps": 109,
   "notes": [
     "MLC is the exact media-player name.",
     "App names are not prefixed with AIR.",
@@ -34,20 +34,27 @@
       "name": "App Store",
       "category": "System and desktop",
       "targets": [
-        "cardputer-adv",
-        "desktop"
+        "cardputer-adv"
       ],
-      "status": "planned"
+      "status": "builtin"
     },
     {
       "id": "settings",
       "name": "Settings",
       "category": "System and desktop",
       "targets": [
-        "cardputer-adv",
-        "desktop"
+        "cardputer-adv"
       ],
-      "status": "planned"
+      "status": "builtin"
+    },
+    {
+      "id": "about",
+      "name": "About",
+      "category": "System and desktop",
+      "targets": [
+        "cardputer-adv"
+      ],
+      "status": "builtin"
     },
     {
       "id": "notifications",
@@ -120,14 +127,22 @@
       "status": "planned"
     },
     {
+      "id": "notes",
+      "name": "Notes",
+      "category": "System and desktop",
+      "targets": [
+        "cardputer-adv"
+      ],
+      "status": "builtin"
+    },
+    {
       "id": "file-manager",
       "name": "File Manager",
       "category": "System and desktop",
       "targets": [
-        "cardputer-adv",
-        "desktop"
+        "cardputer-adv"
       ],
-      "status": "planned"
+      "status": "builtin"
     },
     {
       "id": "terminal",
@@ -614,10 +629,9 @@
       "name": "Snake",
       "category": "Games and gaming",
       "targets": [
-        "cardputer-adv",
-        "desktop"
+        "cardputer-adv"
       ],
-      "status": "planned"
+      "status": "builtin"
     },
     {
       "id": "tetris",
@@ -734,20 +748,18 @@
       "name": "Calculator",
       "category": "Device tools",
       "targets": [
-        "cardputer-adv",
-        "desktop"
+        "cardputer-adv"
       ],
-      "status": "planned"
+      "status": "builtin"
     },
     {
       "id": "clock",
       "name": "Clock",
       "category": "Device tools",
       "targets": [
-        "cardputer-adv",
-        "desktop"
+        "cardputer-adv"
       ],
-      "status": "planned"
+      "status": "builtin"
     },
     {
       "id": "stopwatch",
@@ -764,10 +776,9 @@
       "name": "Timer",
       "category": "Device tools",
       "targets": [
-        "cardputer-adv",
-        "desktop"
+        "cardputer-adv"
       ],
-      "status": "planned"
+      "status": "builtin"
     },
     {
       "id": "alarm",
@@ -804,10 +815,9 @@
       "name": "Keyboard Test",
       "category": "Device tools",
       "targets": [
-        "cardputer-adv",
-        "desktop"
+        "cardputer-adv"
       ],
-      "status": "planned"
+      "status": "builtin"
     },
     {
       "id": "keyboard",
@@ -834,30 +844,27 @@
       "name": "Storage Manager",
       "category": "Device tools",
       "targets": [
-        "cardputer-adv",
-        "desktop"
+        "cardputer-adv"
       ],
-      "status": "planned"
+      "status": "builtin"
     },
     {
       "id": "system-information",
       "name": "System Information",
       "category": "Device tools",
       "targets": [
-        "cardputer-adv",
-        "desktop"
+        "cardputer-adv"
       ],
-      "status": "planned"
+      "status": "builtin"
     },
     {
       "id": "diagnostics",
       "name": "Diagnostics",
       "category": "Device tools",
       "targets": [
-        "cardputer-adv",
-        "desktop"
+        "cardputer-adv"
       ],
-      "status": "planned"
+      "status": "builtin"
     },
     {
       "id": "automation",
@@ -1068,6 +1075,21 @@
         "desktop"
       ],
       "status": "planned"
+    },
+    {
+      "id": "tap-counter",
+      "name": "Tap Counter",
+      "category": "Device tools",
+      "targets": [
+        "cardputer-adv"
+      ],
+      "status": "experimental",
+      "package": {
+        "format": "mcai-app-v1",
+        "url": "https://raw.githubusercontent.com/betabeeswax/MCAI-OS-APPS/main/apps/tap-counter/app.json",
+        "sha256": "1979ca3f5f9f2558a92753dcba0156e7b82d9186163f90b51f6b992451a03d97",
+        "sizeBytes": 196
+      }
     }
   ]
 }
