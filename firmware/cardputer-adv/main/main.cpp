@@ -583,13 +583,32 @@ void init_keyboard() {
     if(i2c_param_config(I2C_NUM_0,&cfg)!=ESP_OK || i2c_driver_install(I2C_NUM_0,cfg.mode,0,0,0)!=ESP_OK) {
         ESP_LOGW(kTag,"I2C initialization failed"); return;
     }
-    // Cardputer ADV uses a TCA8418 keypad controller at 0x34, scanning 7x8.
-    if(keyboard_write(0x1D,0x7F)!=ESP_OK || keyboard_write(0x1E,0xFF)!=ESP_OK ||
-       keyboard_write(0x1F,0x00)!=ESP_OK || keyboard_write(0x01,0x01)!=ESP_OK) {
-        ESP_LOGW(kTag,"TCA8418 keyboard not detected"); return;
+    // Match M5Stack's Cardputer ADV TCA8418 setup: GPIO defaults, 7x8
+    // matrix, clear stale FIFO/status, then enable keypad + GPIO interrupts.
+    const std::uint8_t setup[][2] = {
+        {0x23,0x00},{0x24,0x00},{0x25,0x00}, // GPIO direction: inputs
+        {0x20,0xFF},{0x21,0xFF},{0x22,0xFF}, // GPI event mode
+        {0x26,0x00},{0x27,0x00},{0x28,0x00}, // falling-edge interrupt mode
+        {0x1A,0xFF},{0x1B,0xFF},{0x1C,0xFF}, // GPIO interrupts
+        {0x1D,0x7F},{0x1E,0xFF},{0x1F,0x00}  // 7 rows x 8 columns
+    };
+    for(const auto& reg:setup) {
+        if(keyboard_write(reg[0],reg[1])!=ESP_OK) {
+            ESP_LOGW(kTag,"TCA8418 setup failed at register 0x%02X",reg[0]); return;
+        }
+    }
+    std::uint8_t stale=0;
+    while(keyboard_read(0x03,&stale)==ESP_OK && (stale&0x0F)) {
+        std::uint8_t discard=0;
+        if(keyboard_read(0x04,&discard)!=ESP_OK) break;
+    }
+    keyboard_read(0x11,&stale); keyboard_read(0x12,&stale); keyboard_read(0x13,&stale);
+    keyboard_write(0x02,0x03); // clear keypad + GPIO interrupt status
+    if(keyboard_write(0x01,0x03)!=ESP_OK) {
+        ESP_LOGW(kTag,"TCA8418 interrupt enable failed"); return;
     }
     keyboard_ready=true;
-    ESP_LOGI(kTag,"TCA8418 keyboard initialized");
+    ESP_LOGI(kTag,"TCA8418 7x8 matrix initialized");
 }
 
 void init_sd_card() {
