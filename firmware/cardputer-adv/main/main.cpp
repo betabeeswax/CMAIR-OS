@@ -47,6 +47,10 @@ int active_app = -1;
 int setting_brightness = 1;
 int calc_value = 0;
 int file_scroll = 0;
+char note_buffer[160] = {};
+int note_length = 0;
+char last_char = '-';
+unsigned keypress_count = 0;
 bool boot_button_was_pressed = false;
 constexpr int kAppsPerPage = 5;
 constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT"};
@@ -260,6 +264,16 @@ void init_sd_card() {
     else ESP_LOGW(kTag,"microSD unavailable: %s",esp_err_to_name(err));
 }
 
+char decode_key(int row, int col) {
+    static const unsigned char keys[4][14] = {
+        {126,49,50,51,52,53,54,55,56,57,48,45,61,8},
+        {9,113,119,101,114,116,121,117,105,111,112,91,93,92},
+        {0,0,97,115,100,102,103,104,106,107,108,59,39,10},
+        {0,0,0,122,120,99,118,98,110,109,44,46,47,32}
+    };
+    return keys[row][col] ? static_cast<char>(keys[row][col]) : 0;
+}
+
 void poll_keyboard() {
     if(!keyboard_ready) return;
     std::uint8_t count=0;
@@ -271,6 +285,9 @@ void poll_keyboard() {
         // TCA8418 sets bit 7 for RELEASE; bit 7 clear means PRESS.
         if((event & 0x80) == 0) continue;
         const std::uint8_t key = event & 0x7F;
+        const int ix=(key>0)?key-1:0; const int rr=ix/10, rc=ix%10;
+        const int matrix_col=rr*2+(rc>3?1:0), matrix_row=(rc+4)%4;
+        const char ch=decode_key(matrix_row,matrix_col); if(ch) { last_char=ch; ++keypress_count; }
         // ADV matrix values are decimal row/column scan codes, not hex key IDs.
         // Cardputer navigation keys from the ADV 4x14 matrix: comma=44, semicolon=53, period=48, slash=54.
         if(active_app >= 0) {
@@ -279,6 +296,7 @@ void poll_keyboard() {
             else if(key==58 || key==64) { if(active_app==0) ++file_scroll; else if(active_app==2) ++calc_value; else if(active_app==3 && setting_brightness<2) ++setting_brightness; }
             else if(key==67) {
                 if(active_app==2) calc_value=0;
+                else if(active_app==1 && sd_ready) { mkdir("/sdcard/MCAI-OS",0775); FILE* nf=std::fopen("/sdcard/MCAI-OS/notes.txt","w"); if(nf){std::fwrite(note_buffer,1,note_length,nf);std::fclose(nf);} }
                 else if(active_app==1 && sd_ready) { mkdir("/sdcard/MCAI-OS",0775); mkdir("/sdcard/MCAI-OS/notes",0775); FILE* note=std::fopen("/sdcard/MCAI-OS/notes/Welcome.txt","a"); if(note) { std::fputs("Welcome to MCAI-OS notes.\n",note); std::fclose(note); } }
             }
         } else if(key==53 || key==44) selected_app=(selected_app+kAppCount-1)%kAppCount;
@@ -305,6 +323,7 @@ extern "C" void app_main(void) {
         // GPIO0 is the Cardputer ADV BOOT/shoulder button and acts as Select.
         const bool boot_pressed = gpio_get_level(GPIO_NUM_0) == 0;
         if(boot_pressed && !boot_button_was_pressed) {
+            if(active_app==1 && sd_ready) { mkdir("/sdcard/MCAI-OS",0775); FILE* nf=std::fopen("/sdcard/MCAI-OS/notes.txt","w"); if(nf){std::fwrite(note_buffer,1,note_length,nf);std::fclose(nf);} }
             if(active_app >= 0) active_app = -1;
             else active_app = selected_app;
         }
