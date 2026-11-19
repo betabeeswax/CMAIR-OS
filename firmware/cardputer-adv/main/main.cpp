@@ -1254,9 +1254,27 @@ void poll_keyboard() {
         } else if(active_app==6){
             if(key==KEY_ESC||key==KEY_BACKSPACE)active_app=-1;
         } else if(active_app==7){
-            if(is_up(key)||is_left(key)){timer_seconds=std::max(0,timer_seconds-10);if(timer_running)timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;}
-            else if(is_down(key)||is_right(key)){timer_seconds=std::min(5999,timer_seconds+10);if(timer_running)timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;}
-            else if(key==KEY_ENTER){if(timer_running){timer_running=false;timer_seconds=std::max(0,(int)((timer_end_us-esp_timer_get_time()+999999)/1000000));}else{timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;timer_running=true;}}
+            if(key==KEY_ENTER){
+                if(timer_running){
+                    timer_running=false;
+                    timer_seconds=std::max(0,(int)((timer_end_us-esp_timer_get_time()+999999)/1000000));
+                    std::snprintf(timer_input,sizeof(timer_input),"%02d:%02d:%02d",timer_seconds/3600,(timer_seconds/60)%60,timer_seconds%60);
+                } else {
+                    int h=0,m=0,sec=0,fields=0;
+                    if(std::strchr(timer_input,':'))fields=std::sscanf(timer_input,"%d:%d:%d",&h,&m,&sec);
+                    else fields=std::sscanf(timer_input,"%d",&sec);
+                    if(fields==2){sec=m;m=h;h=0;}
+                    if(fields>0&&h>=0&&h<=99&&m>=0&&m<60&&sec>=0&&sec<60){
+                        timer_seconds=h*3600+m*60+sec;
+                        if(timer_seconds>0){timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;timer_running=true;}
+                        else std::snprintf(store_message,sizeof(store_message),"ENTER A TIME FIRST");
+                    } else std::snprintf(store_message,sizeof(store_message),"USE HH:MM:SS");
+                }
+            } else if(!timer_running&&key==KEY_BACKSPACE){size_t n=std::strlen(timer_input);if(n)timer_input[n-1]=0;}
+            else if(!timer_running&&(ch=='c'||ch=='C'))timer_input[0]=0;
+            else if(!timer_running&&(ch=='r'||ch=='R'))std::snprintf(timer_input,sizeof(timer_input),"00:01:00");
+            else if(!timer_running&&((ch>='0'&&ch<='9')||ch==':')&&std::strlen(timer_input)<sizeof(timer_input)-1){size_t n=std::strlen(timer_input);timer_input[n]=ch;timer_input[n+1]=0;}
+
         } else if(active_app==8){/* Every key press is counted above. */}
         else if(active_app==11){
             if(is_back(key)){active_app=-1;game_started=false;}
