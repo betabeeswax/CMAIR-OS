@@ -357,7 +357,7 @@ bool eval_factor(const char*& p,double& out) {
     while(*p==' ') ++p;
     if(*p=='-'){++p;if(!eval_factor(p,out))return false;out=-out;return true;}
     if(*p=='('){++p;if(!eval_expr(p,out))return false;while(*p==' ')++p;if(*p!=')')return false;++p;return true;}
-    char* end=nullptr;out=std::strtod(p,&end);if(end==p)return false;p=end;return std::isfinite(out);
+    char* end=nullptr;out=std::strtod(p,&end);if(end==p)return false;p=end;if(*p=='%'){++p;out/=100.0;}return std::isfinite(out);
 }
 bool eval_term(const char*& p,double& out) {
     if(!eval_factor(p,out))return false;
@@ -760,16 +760,16 @@ void seed_store() { /* Store entries are fetched from the official GitHub catalo
 void open_selected_file() {
     if(file_count==0)return;
     char path[240];std::snprintf(path,sizeof(path),"%s/%s",current_dir,file_names[file_selected]);
-    if(file_is_dir[file_selected]){std::snprintf(current_dir,sizeof(current_dir),"%.159s",path);refresh_files();return;}
+    if(file_is_dir[file_selected]){std::snprintf(current_dir,sizeof(current_dir),"%.159s",path);file_scroll=0;refresh_files();return;}
     FILE* f=std::fopen(path,"r");if(!f)return;
-    const size_t n=std::fread(viewer_buffer,1,sizeof(viewer_buffer)-1,f);viewer_buffer[n]=0;std::fclose(f);viewing_file=true;
+    const size_t n=std::fread(viewer_buffer,1,sizeof(viewer_buffer)-1,f);viewer_buffer[n]=0;std::fclose(f);viewing_file=true;file_scroll=0;
 }
 int wrapped_line_count(const char* text,int width) {
     int lines=1,col=0;
     if(!text)return 0;
     for(const char* p=text;*p;++p){
         if(*p=='\n'){++lines;col=0;}
-        else if(++col>=width){++lines;col=0;}
+        else {if(col==width){++lines;col=0;}++col;}
     }
     return lines;
 }
