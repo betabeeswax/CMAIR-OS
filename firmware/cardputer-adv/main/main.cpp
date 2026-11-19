@@ -403,9 +403,10 @@ void ble_gap_callback(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* para
         if(param->scan_param_cmpl.status==ESP_BT_STATUS_SUCCESS) {
             const esp_err_t e=esp_ble_gap_start_scanning(6);
             ble_scan_active=(e==ESP_OK);
-            if(e!=ESP_OK) ESP_LOGE(kTag,"BLE scan start: %s",esp_err_to_name(e));
+            if(e!=ESP_OK){std::snprintf(store_message,sizeof(store_message),"BLE SCAN START FAIL");ESP_LOGE(kTag,"BLE scan start: %s",esp_err_to_name(e));}
         } else {
             ble_scan_active=false;
+            std::snprintf(store_message,sizeof(store_message),"BLE PARAM SET FAIL");
             ESP_LOGE(kTag,"BLE scan parameters failed: %d",param->scan_param_cmpl.status);
         }
         ui_dirty=true;
@@ -883,7 +884,8 @@ void render_app() {
             }
         } else {
             draw_text("SETTINGS",8,25,1,accent);
-            draw_text(wifi_connected?"WIFI CONNECTED":"WIFI NOT CONNECTED",104,25,1,wifi_connected?accent:muted);
+            draw_text(wifi_connected?"WIFI ONLINE":"WIFI OFFLINE",142,25,1,wifi_connected?accent:muted);
+            if(wifi_connected)draw_text(wifi_ip_text,8,35,1,accent);
             const char* rows[]={"BRIGHTNESS","THEME","WI-FI SETUP","BLUETOOTH","SOUNDS"};
             for(int i=0;i<5;i++){
                 char item[40];
@@ -894,7 +896,6 @@ void render_app() {
                 draw_text(item,12,43+i*15,1,i==settings_selection?accent:ink);
             }
             draw_text("UP/DOWN SELECT  LEFT/RIGHT CHANGE",8,111,1,muted);
-            if(wifi_connected)draw_text(wifi_ip_text,158,111,1,accent);
             draw_text("ENTER OPEN  ESC BACK",8,123,1,muted);
         }
         break;
