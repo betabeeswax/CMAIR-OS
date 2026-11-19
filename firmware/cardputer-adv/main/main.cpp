@@ -885,11 +885,19 @@ bool launch_installed_package(const char* id) {
     cJSON* subtitle=ui?cJSON_GetObjectItemCaseSensitive(ui,"subtitle"):nullptr;
     cJSON* initial=ui?cJSON_GetObjectItemCaseSensitive(ui,"initial"):nullptr;
     cJSON* increment=ui?cJSON_GetObjectItemCaseSensitive(ui,"increment"):nullptr;
+    cJSON* game=ui?cJSON_GetObjectItemCaseSensitive(ui,"game"):nullptr;
+    int game_type=0;
+    if(cJSON_IsString(game)){
+      if(std::strcmp(game->valuestring,"dice")==0)game_type=1;
+      else if(std::strcmp(game->valuestring,"coin")==0)game_type=2;
+      else if(std::strcmp(game->valuestring,"lucky-seven")==0)game_type=3;
+    }
+    bool game_valid=!game||!cJSON_IsString(game)||(game_type>0);
     bool valid=cJSON_IsString(fmt)&&std::strcmp(fmt->valuestring,"mcai-app-v1")==0&&
       cJSON_IsString(pid)&&std::strcmp(pid->valuestring,id)==0&&
       cJSON_IsString(target)&&std::strcmp(target->valuestring,"cardputer-adv")==0&&
       cJSON_IsObject(ui)&&cJSON_IsString(title)&&cJSON_IsString(subtitle)&&
-      cJSON_IsNumber(initial)&&cJSON_IsNumber(increment)&&
+      cJSON_IsNumber(initial)&&cJSON_IsNumber(increment)&&game_valid&&
       initial->valuedouble>=-999999&&initial->valuedouble<=999999&&
       increment->valuedouble>=1&&increment->valuedouble<=1000;
     if(valid){
@@ -898,7 +906,8 @@ bool launch_installed_package(const char* id) {
       std::snprintf(package_subtitle,sizeof(package_subtitle),"%s",subtitle->valuestring);
       package_counter=(int)initial->valuedouble;
       package_increment=(int)increment->valuedouble;
-      package_running=true;package_game=0;std::snprintf(package_result,sizeof(package_result),"");active_app=16;
+      package_game=game_type;std::snprintf(package_result,sizeof(package_result),"");
+      package_running=true;active_app=16;
     }
     cJSON_Delete(root);return valid;
 }
