@@ -83,6 +83,7 @@ bool bluetooth_screen=false, ble_ready=false, ble_scan_active=false;
 int ble_device_count=0, ble_device_scroll=0;
 char ble_devices[12][32]={};
 char ble_rssi[12][8]={};
+char ble_addresses[12][18]={};
 esp_ble_scan_params_t ble_scan_params={};
 char calc_buffer[48] = {};
 int calc_length = 0;
@@ -358,11 +359,16 @@ void ble_gap_callback(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* para
                     param->scan_rst.bda[0],param->scan_rst.bda[1],param->scan_rst.bda[2],
                     param->scan_rst.bda[3],param->scan_rst.bda[4],param->scan_rst.bda[5]);
             }
+            char address[18];
+            std::snprintf(address,sizeof(address),"%02X:%02X:%02X:%02X:%02X:%02X",
+                param->scan_rst.bda[0],param->scan_rst.bda[1],param->scan_rst.bda[2],
+                param->scan_rst.bda[3],param->scan_rst.bda[4],param->scan_rst.bda[5]);
             int found=-1;
-            for(int i=0;i<ble_device_count;i++) if(std::strcmp(ble_devices[i],label)==0){found=i;break;}
+            for(int i=0;i<ble_device_count;i++) if(std::strcmp(ble_addresses[i],address)==0){found=i;break;}
             if(found<0 && ble_device_count<12) found=ble_device_count++;
             if(found>=0) {
                 std::snprintf(ble_devices[found],sizeof(ble_devices[found]),"%.31s",label);
+                std::snprintf(ble_addresses[found],sizeof(ble_addresses[found]),"%s",address);
                 std::snprintf(ble_rssi[found],sizeof(ble_rssi[found]),"%d",param->scan_rst.rssi);
             }
             ui_dirty=true;
@@ -420,6 +426,7 @@ bool start_ble_scan() {
     ble_device_count=0; ble_device_scroll=0;
     std::memset(ble_devices,0,sizeof(ble_devices));
     std::memset(ble_rssi,0,sizeof(ble_rssi));
+    std::memset(ble_addresses,0,sizeof(ble_addresses));
     if(!init_bluetooth()) { std::snprintf(store_message,sizeof(store_message),"BLE INIT FAILED"); return false; }
     ble_scan_params.scan_type=BLE_SCAN_TYPE_ACTIVE;
     ble_scan_params.own_addr_type=BLE_ADDR_TYPE_PUBLIC;
