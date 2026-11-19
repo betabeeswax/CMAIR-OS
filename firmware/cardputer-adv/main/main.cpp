@@ -1208,6 +1208,7 @@ void poll_keyboard() {
         else if(key==KEY_ALT)std::snprintf(last_key_label,sizeof(last_key_label),"ALT");
         else if(key==KEY_OPT)std::snprintf(last_key_label,sizeof(last_key_label),"OPT");
         else if(key==KEY_DELETE)std::snprintf(last_key_label,sizeof(last_key_label),"DELETE");
+        else if(fn_lock&&row==0&&col>=1&&col<=12)std::snprintf(last_key_label,sizeof(last_key_label),"F%d",col);
         else if(ch)std::snprintf(last_key_label,sizeof(last_key_label),"%c",ch);
         else std::snprintf(last_key_label,sizeof(last_key_label),"FN KEY");
         last_char=ch?ch:(key==KEY_UP?'^':key==KEY_DOWN?'v':key==KEY_LEFT?'<':key==KEY_RIGHT?'>':'?');
