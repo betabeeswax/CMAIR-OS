@@ -377,7 +377,7 @@ void calculate() {
     calc_length=(int)std::strlen(calc_buffer);
 }
 void refresh_files() {
-    file_count=0; file_selected=0;
+    file_count=0; file_selected=0; file_scroll=0;
     DIR* d=opendir(current_dir); if(!d)return;
     struct dirent* e;
     while((e=readdir(d))!=nullptr && file_count<32) {
@@ -885,7 +885,7 @@ void render_app() {
         } else {
             draw_text("SETTINGS",8,25,1,accent);
             draw_text(wifi_connected?"WIFI ONLINE":"WIFI OFFLINE",142,25,1,wifi_connected?accent:muted);
-            if(wifi_connected)draw_text(wifi_ip_text,8,35,1,accent);
+            if(wifi_connected)draw_text(wifi_ip_text,8,35,1,accent);else draw_text(store_message,8,35,1,muted);
             const char* rows[]={"BRIGHTNESS","THEME","WI-FI SETUP","BLUETOOTH","SOUNDS"};
             for(int i=0;i<5;i++){
                 char item[40];
@@ -1342,7 +1342,7 @@ void poll_keyboard() {
             } else if(!timer_running&&key==KEY_BACKSPACE){size_t n=std::strlen(timer_input);if(n)timer_input[n-1]=0;}
             else if(!timer_running&&(ch=='c'||ch=='C'))timer_input[0]=0;
             else if(!timer_running&&(ch=='r'||ch=='R'))std::snprintf(timer_input,sizeof(timer_input),"00:01:00");
-            else if(!timer_running&&((ch>='0'&&ch<='9')||ch==':')&&std::strlen(timer_input)<sizeof(timer_input)-1){size_t n=std::strlen(timer_input);timer_input[n]=ch;timer_input[n+1]=0;}
+            else if(!timer_running&&((ch>='0'&&ch<='9')||ch==':')&&std::strlen(timer_input)<8){size_t n=std::strlen(timer_input);timer_input[n]=ch;timer_input[n+1]=0;}
 
         } else if(active_app==8){/* Every key press is counted above. */}
         else if(active_app==11){
