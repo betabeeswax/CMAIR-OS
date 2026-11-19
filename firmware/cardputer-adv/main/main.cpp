@@ -922,7 +922,7 @@ void render_app() {
     case 8:
         draw_text("KEYBOARD TEST",8,27,1,accent);draw_text("LAST KEY:",8,48,1,muted);draw_text(last_key_label,68,48,1,ink);
         std::snprintf(line,sizeof(line),"KEY EVENTS: %lu",(unsigned long)keypress_count);draw_text(line,8,69,1,ink);
-        draw_text("SHIFT=CAPS FN=ARROWS",8,91,1,muted);draw_text("TEST ALL 56 KEYS",8,105,1,muted);break;
+        draw_text("SHIFT=UPPER  FN+SHIFT=CAPS",8,91,1,muted);draw_text("TEST ALL 56 KEYS",8,105,1,muted);break;
     case 9: {
         if(sd_ready){draw_text("SD CARD MOUNTED",8,35,1,accent);draw_text("FILESYSTEM FAT",8,54,1,ink);draw_text("USE FILE MANAGER",8,73,1,muted);}else draw_text("SD CARD NOT MOUNTED",8,43,1,ink);break;}
     case 10:
@@ -942,7 +942,7 @@ void render_app() {
     default:
         draw_text("MCAI-OS FOR CARDPUTER ADV",8,37,1,ink);draw_text("VERSION 0.2.0",8,57,1,accent);draw_text("BUILT-IN APP SUITE",8,77,1,muted);break;
     }
-    fill_rect(0,122,kWidth,1,rgb565(44,59,78));draw_text("BACKSPACE: HOME",8,126,1,muted);
+    fill_rect(0,122,kWidth,1,rgb565(44,59,78));draw_text("ESC: HOME",8,126,1,muted);
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
 }
 
@@ -1342,7 +1342,7 @@ void poll_keyboard() {
             else if(is_right(key)&&snake_dx==0){snake_dx=1;snake_dy=0;}
             else if(game_over&&key==KEY_ENTER)game_started=false;
         }
-        if(is_back(key)&&active_app!=0&&active_app!=1&&active_app!=2&&active_app!=5&&active_app!=6&&active_app!=11)active_app=-1;
+        if(key==KEY_ESC&&active_app!=0&&active_app!=1&&active_app!=2&&active_app!=5&&active_app!=6&&active_app!=11)active_app=-1;
     }
     std::uint8_t status=0;if(keyboard_read(0x02,&status)==ESP_OK&&(status&0x01))keyboard_write(0x02,0x01);
 }} // namespace
