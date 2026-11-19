@@ -1389,10 +1389,13 @@ extern "C" void app_main(void) {
     init_display();
     init_keyboard();
     draw_mcaI_logo_splash();
-    // Keep the boot screen visible until the keyboard receives a key press.
+    // Never trap the device on the splash screen if the keyboard controller
+    // fails to initialize or its first key event is missed.
     keypress_count=0;
-    while(keypress_count==0) {
+    const std::int64_t boot_wait_until=esp_timer_get_time()+8000000;
+    while(keyboard_ready && keypress_count==0 && esp_timer_get_time()<boot_wait_until) {
         poll_keyboard();
+        if(gpio_get_level(GPIO_NUM_0)==0) break;
         vTaskDelay(pdMS_TO_TICKS(20));
     }
     init_audio();init_sd_card();load_settings();seed_store();apply_brightness();render_home();play_tone(660,90);
