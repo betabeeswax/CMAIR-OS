@@ -956,7 +956,7 @@ void render_app() {
     default:
         draw_text("MCAI-OS FOR CARDPUTER ADV",8,37,1,ink);draw_text("VERSION 0.2.0",8,57,1,accent);draw_text("BUILT-IN APP SUITE",8,77,1,muted);break;
     }
-    fill_rect(0,122,kWidth,1,rgb565(44,59,78));draw_text("ESC: HOME",8,126,1,muted);
+    fill_rect(0,122,kWidth,1,rgb565(44,59,78)); // Keep app-specific footer text clear; ESC still returns home.
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
 }
 
