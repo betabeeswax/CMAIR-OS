@@ -892,7 +892,7 @@ bool launch_installed_package(const char* id) {
       else if(std::strcmp(game->valuestring,"coin")==0)game_type=2;
       else if(std::strcmp(game->valuestring,"lucky-seven")==0)game_type=3;
     }
-    bool game_valid=!game||!cJSON_IsString(game)||(game_type>0);
+    bool game_valid=!game||(cJSON_IsString(game)&&game_type>0);
     bool valid=cJSON_IsString(fmt)&&std::strcmp(fmt->valuestring,"mcai-app-v1")==0&&
       cJSON_IsString(pid)&&std::strcmp(pid->valuestring,id)==0&&
       cJSON_IsString(target)&&std::strcmp(target->valuestring,"cardputer-adv")==0&&
