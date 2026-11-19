@@ -88,6 +88,9 @@ bool ble_device_named[12]={};
 int last_clock_render_second=-1;
 bool wifi_driver_ready=false;
 bool wifi_connected=false;
+bool wifi_connecting=false;
+char wifi_task_ssid[33]={};
+char wifi_task_password[65]={};
 char wifi_ip_text[16]="0.0.0.0";
 esp_netif_t* wifi_sta_netif=nullptr;
 char wifi_networks[16][33]={}; int wifi_network_rssi[16]={}; int wifi_network_auth[16]={};
@@ -615,6 +618,21 @@ bool connect_wifi_credentials(const char* ssid,const char* password) {
     std::snprintf(store_message,sizeof(store_message),"NO IP - CHECK PASSWORD / ROUTER");
     return false;
 }
+void wifi_connect_task(void*) {
+    connect_wifi_credentials(wifi_task_ssid,wifi_task_password);
+    wifi_connecting=false;
+    ui_dirty=true;
+    vTaskDelete(nullptr);
+}
+bool start_wifi_connect(const char* ssid,const char* password) {
+    if(wifi_connecting)return false;
+    std::snprintf(wifi_task_ssid,sizeof(wifi_task_ssid),"%.32s",ssid?ssid:"");
+    std::snprintf(wifi_task_password,sizeof(wifi_task_password),"%.64s",password?password:"");
+    wifi_connecting=true;
+    std::snprintf(store_message,sizeof(store_message),"CONNECTING TO WIFI");
+    if(xTaskCreate(wifi_connect_task,"wifi-connect",4096,nullptr,4,nullptr)!=pdPASS){wifi_connecting=false;std::snprintf(store_message,sizeof(store_message),"WIFI TASK FAILED");return false;}
+    return true;
+}
 bool connect_wifi_from_sd() {
     if(wifi_started){
         wifi_ap_record_t current{};
@@ -904,7 +922,7 @@ void render_app() {
             }
         } else {
             draw_text("SETTINGS",8,25,1,accent);
-            draw_text(wifi_connected?"WIFI: CONNECTED":"WIFI: OFFLINE",8,39,1,wifi_connected?accent:muted);
+            draw_text(wifi_connected?"WIFI: CONNECTED":(wifi_connecting?"WIFI: CONNECTING":"WIFI: OFFLINE"),8,39,1,wifi_connected?accent:(wifi_connecting?accent:muted));
             if(wifi_connected)draw_text(wifi_ip_text,150,39,1,accent);
             const char* rows[]={"BRIGHTNESS","THEME","WI-FI NETWORKS","BLUETOOTH DEVICES","SOUND"};
             for(int i=0;i<5;i++){
@@ -1297,7 +1315,7 @@ void poll_keyboard() {
                         wifi_password_input[0]=0;
                         if(wifi_network_auth[wifi_network_selected]==WIFI_AUTH_OPEN){
                             save_wifi_settings();
-                            if(connect_wifi_credentials(wifi_ssid_input,""))start_time_sync();
+                            start_wifi_connect(wifi_ssid_input,"");
                             wifi_setup_step=0;
                         } else wifi_setup_step=4;
                     }
@@ -1308,7 +1326,7 @@ void poll_keyboard() {
                     if(wifi_setup_step==1){wifi_setup_step=2;}
                     else {
                         save_wifi_settings();
-                        if(connect_wifi_credentials(wifi_ssid_input,wifi_password_input))start_time_sync();
+                        start_wifi_connect(wifi_ssid_input,wifi_password_input);
                         wifi_setup_step=0;
                     }
                 } else if(ch>=32&&ch<127){
