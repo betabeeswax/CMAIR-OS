@@ -81,6 +81,7 @@ char wifi_ssid_input[33]={};
 char wifi_password_input[65]={};
 bool bluetooth_screen=false, ble_ready=false, ble_scan_active=false;
 bool wifi_driver_ready=false;
+esp_netif_t* wifi_sta_netif=nullptr;
 char wifi_networks[16][33]={}; int wifi_network_rssi[16]={}; int wifi_network_auth[16]={};
 int wifi_network_count=0, wifi_network_selected=0, wifi_network_scroll=0;
 int ble_device_count=0, ble_device_scroll=0;
@@ -489,7 +490,10 @@ bool init_wifi_driver() {
     if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
     e=esp_netif_init();if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
     e=esp_event_loop_create_default();if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
-    esp_netif_create_default_wifi_sta();
+    if(!wifi_sta_netif){
+        wifi_sta_netif=esp_netif_create_default_wifi_sta();
+        if(!wifi_sta_netif){ESP_LOGE(kTag,"Wi-Fi station interface creation failed");return false;}
+    }
     wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();
     e=esp_wifi_init(&init);if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
     e=esp_wifi_set_mode(WIFI_MODE_STA);if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
