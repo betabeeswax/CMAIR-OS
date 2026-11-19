@@ -556,27 +556,46 @@ bool scan_wifi_networks() {
     return wifi_network_count>0;
 }
 bool connect_wifi_credentials(const char* ssid,const char* password) {
-    if(!ssid||!ssid[0]||std::strlen(ssid)>32||!password||std::strlen(password)>64||!init_wifi_driver())return false;
+    wifi_connected=false;std::snprintf(wifi_ip_text,sizeof(wifi_ip_text),"0.0.0.0");
+    if(!ssid||!ssid[0]||std::strlen(ssid)>32||!password||std::strlen(password)>64||!init_wifi_driver()){
+        std::snprintf(store_message,sizeof(store_message),"WIFI INIT / INPUT FAILED");return false;
+    }
     wifi_config_t cfg={};
     std::memcpy(cfg.sta.ssid,ssid,std::strlen(ssid));
     std::memcpy(cfg.sta.password,password,std::strlen(password));
     cfg.sta.threshold.authmode=WIFI_AUTH_OPEN;
     esp_wifi_disconnect();
     if(esp_wifi_set_config(WIFI_IF_STA,&cfg)!=ESP_OK||esp_wifi_connect()!=ESP_OK){
-        std::snprintf(store_message,sizeof(store_message),"WIFI CONNECT FAILED");return false;
+        std::snprintf(store_message,sizeof(store_message),"WIFI CONNECT REQUEST FAILED");return false;
     }
     wifi_started=true;
-    for(int i=0;i<40;i++){
+    for(int i=0;i<60;i++){
         wifi_ap_record_t ap{};
-        if(esp_wifi_sta_get_ap_info(&ap)==ESP_OK){std::snprintf(store_message,sizeof(store_message),"WIFI CONNECTED");return true;}
+        if(esp_wifi_sta_get_ap_info(&ap)==ESP_OK){
+            esp_netif_ip_info_t ip{};
+            if(wifi_sta_netif&&esp_netif_get_ip_info(wifi_sta_netif,&ip)==ESP_OK&&ip.ip.addr!=0){
+                std::snprintf(wifi_ip_text,sizeof(wifi_ip_text),IPSTR,IP2STR(&ip.ip));
+                wifi_connected=true;
+                std::snprintf(store_message,sizeof(store_message),"WIFI VERIFIED");
+                start_time_sync();
+                return true;
+            }
+        }
         vTaskDelay(pdMS_TO_TICKS(250));
     }
-    std::snprintf(store_message,sizeof(store_message),"WIFI TIMEOUT - CHECK PASSWORD");return false;
+    std::snprintf(store_message,sizeof(store_message),"NO IP - CHECK ROUTER/PASSWORD");
+    return false;
 }
 bool connect_wifi_from_sd() {
     if(wifi_started){
         wifi_ap_record_t current{};
-        if(esp_wifi_sta_get_ap_info(&current)==ESP_OK)return true;
+        if(esp_wifi_sta_get_ap_info(&current)==ESP_OK){
+            esp_netif_ip_info_t ip{};
+            if(wifi_sta_netif&&esp_netif_get_ip_info(wifi_sta_netif,&ip)==ESP_OK&&ip.ip.addr!=0){
+                std::snprintf(wifi_ip_text,sizeof(wifi_ip_text),IPSTR,IP2STR(&ip.ip));wifi_connected=true;return true;
+            }
+        }
+        wifi_connected=false;
     }
     FILE* f=std::fopen("/sdcard/MCAI-OS/wifi.cfg","r");
     if(!f){std::snprintf(store_message,sizeof(store_message),"CHOOSE WIFI IN SETTINGS");return false;}
