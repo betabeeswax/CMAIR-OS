@@ -128,7 +128,7 @@ bool ota_running=false;
 char ota_message[48]="PRESS ENTER TO CHECK FOR UPDATES";
 char store_message[40]="ADD WIFI.CFG ON SD"; bool wifi_started=false, catalogue_loaded=false, ntp_started=false;
 char catalogue_buffer[32768]={}; size_t catalogue_length=0;
-bool package_running=false; char package_title[64]=""; char package_subtitle[96]=""; char package_id[64]=""; int package_counter=0, package_increment=1;
+bool package_running=false; int package_return_app=5; char package_title[64]=""; char package_subtitle[96]=""; char package_id[64]=""; int package_counter=0, package_increment=1;
 char clock_input[8] = {};
 int clock_len = 0;
 int timer_seconds = 60;
@@ -920,8 +920,8 @@ void start_launcher_item(int item) {
     if(item==-1){folder_open=true;folder_selected=0;return;}
     if(item>=kAppCount){
         const int p=item-kAppCount;
-        if(p>=0&&p<installed_package_count&&!launch_installed_package(installed_package_ids[p]))
-            std::snprintf(store_message,sizeof(store_message),"APP LOAD FAILED");
+        if(p>=0&&p<installed_package_count){package_return_app=-1;if(!launch_installed_package(installed_package_ids[p]))
+            std::snprintf(store_message,sizeof(store_message),"APP LOAD FAILED");}
         return;
     }
     if(item<0||item>=kAppCount)return;
@@ -1626,6 +1626,7 @@ void poll_keyboard() {
                         if(builtin==5)refresh_store();
                         if(builtin==6)last_clock_render_second=-1;
                     } else if(package_installed(store_ids[store_selected])) {
+                        package_return_app=5;
                         if(!launch_installed_package(store_ids[store_selected]))std::snprintf(store_message,sizeof(store_message),"APP LOAD FAILED");
                     } else {install_store_package();refresh_installed_packages();}
                 }
@@ -1639,7 +1640,7 @@ void poll_keyboard() {
             else if(key==KEY_ENTER&&!ota_running)start_ota_update();
             else if((ch=='r'||ch=='R')&&!ota_running)start_ota_update();
         } else if(active_app==15){
-            if(is_back(key)){package_running=false;active_app=5;}
+            if(is_back(key)){package_running=false;active_app=package_return_app;}
             else if(key==KEY_ENTER){package_counter=std::min(999999,package_counter+package_increment);}
         } else if(active_app==6){
             if(key==KEY_ESC||key==KEY_BACKSPACE)active_app=-1;
