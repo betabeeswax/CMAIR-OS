@@ -83,6 +83,9 @@ int wifi_setup_step=0;
 char wifi_ssid_input[33]={};
 char wifi_password_input[65]={};
 bool bluetooth_screen=false, ble_ready=false, ble_scan_active=false;
+bool ble_complex_mode=false;
+bool ble_device_named[12]={};
+int last_clock_render_second=-1;
 bool wifi_driver_ready=false;
 bool wifi_connected=false;
 char wifi_ip_text[16]="0.0.0.0";
@@ -174,7 +177,10 @@ const std::uint8_t* glyph(char c) {
         {0x3C,0x4A,0x49,0x49,0x30},{0x01,0x71,0x09,0x05,0x03},
         {0x36,0x49,0x49,0x49,0x36},{0x06,0x49,0x49,0x29,0x1E}
     };
-    if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+    static const std::uint8_t lowercase[26][5] = {
+        {0,0,30,1,30},{64,64,94,81,110},{0,0,30,65,30},{1,1,31,65,62},{0,30,33,63,30},{14,16,60,16,16},{0,30,33,31,1},{64,64,94,81,81},{0,64,0,64,64},{0,32,0,33,30},{64,68,72,80,96},{0,64,64,64,64},{0,118,73,73,73},{0,94,81,81,81},{0,30,65,65,30},{0,94,81,94,64},{0,30,65,31,1},{0,94,80,64,64},{0,31,60,3,62},{16,16,60,16,14},{0,65,65,65,62},{0,65,34,20,8},{0,65,73,85,34},{0,65,20,8,20},{0,65,34,20,8},{0,63,8,16,63}
+    };
+    if (c >= 'a' && c <= 'z') return lowercase[c - 'a'];
     if (c >= 'A' && c <= 'Z') return letters[c - 'A'];
     if (c >= '0' && c <= '9') return digits[c - '0'];
     static const std::uint8_t dash[5]={8,8,8,8,8}, plus[5]={8,8,62,8,8};
@@ -314,7 +320,8 @@ void refresh_notes() {
         char tmp[40];std::memcpy(tmp,note_files[i],sizeof(tmp));std::memcpy(note_files[i],note_files[j],sizeof(tmp));std::memcpy(note_files[j],tmp,sizeof(tmp));
     }
     note_selected=std::min(note_selected,std::max(0,note_count-1));
-    notes_action=note_count>0?0:1;
+    note_scroll=0;
+    notes_action=0;
     std::snprintf(store_message,sizeof(store_message),"SELECT OPEN OR NEW NOTE");
 }
 bool save_note() {
@@ -425,9 +432,8 @@ void ble_gap_callback(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* para
                 size_t n=std::min((size_t)31,(size_t)name_len);
                 std::memcpy(label,name,n); label[n]=0;
             } else {
-                std::snprintf(label,sizeof(label),"%02X:%02X:%02X:%02X:%02X:%02X",
-                    param->scan_rst.bda[0],param->scan_rst.bda[1],param->scan_rst.bda[2],
-                    param->scan_rst.bda[3],param->scan_rst.bda[4],param->scan_rst.bda[5]);
+                if(!ble_complex_mode) break;
+                std::snprintf(label,sizeof(label),"UNNAMED DEVICE");
             }
             char address[18];
             std::snprintf(address,sizeof(address),"%02X:%02X:%02X:%02X:%02X:%02X",
@@ -438,6 +444,7 @@ void ble_gap_callback(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* para
             if(found<0 && ble_device_count<12) found=ble_device_count++;
             if(found>=0) {
                 std::snprintf(ble_devices[found],sizeof(ble_devices[found]),"%.31s",label);
+                ble_device_named[found]=(name && name_len>0);
                 std::snprintf(ble_addresses[found],sizeof(ble_addresses[found]),"%s",address);
                 std::snprintf(ble_rssi[found],sizeof(ble_rssi[found]),"%d",param->scan_rst.rssi);
             }
@@ -588,7 +595,7 @@ bool connect_wifi_credentials(const char* ssid,const char* password) {
         std::snprintf(store_message,sizeof(store_message),"WIFI CONNECT REQUEST FAILED");return false;
     }
     wifi_started=true;
-    for(int i=0;i<60;i++){
+    for(int i=0;i<32;i++){
         wifi_ap_record_t ap{};
         if(esp_wifi_sta_get_ap_info(&ap)==ESP_OK){
             esp_netif_ip_info_t ip{};
@@ -602,7 +609,10 @@ bool connect_wifi_credentials(const char* ssid,const char* password) {
         }
         vTaskDelay(pdMS_TO_TICKS(250));
     }
-    std::snprintf(store_message,sizeof(store_message),"NO IP - CHECK ROUTER/PASSWORD");
+    esp_wifi_disconnect();
+    wifi_connected=false;
+    std::snprintf(wifi_ip_text,sizeof(wifi_ip_text),"0.0.0.0");
+    std::snprintf(store_message,sizeof(store_message),"NO IP - CHECK PASSWORD / ROUTER");
     return false;
 }
 bool connect_wifi_from_sd() {
@@ -848,11 +858,13 @@ void render_app() {
     case 1:
         if(!note_editing){
             draw_text("MY NOTES",8,25,1,accent);
-            for(int i=0;i<5;i++){int ix=note_scroll+i;if(ix>=note_count)break;draw_text(note_files[ix],8,40+i*12,1,ix==note_selected?accent:ink);}
-            fill_round_rect(8,105,94,17,3,notes_action==0?accent:muted);
-            fill_round_rect(111,105,121,17,3,notes_action==1?accent:muted);
-            draw_text("OPEN",39,110,1,bg);draw_text("+ NEW NOTE",132,110,1,bg);
-            draw_text(sd_ready?store_message:"INSERT SD CARD",8,125,1,muted);
+            fill_round_rect(171,22,61,16,3,notes_action==1?accent:muted);
+            draw_text("+ NEW",180,27,1,bg);
+            for(int i=0;i<5;i++){int ix=note_scroll+i;if(ix>=note_count)break;draw_text(note_files[ix],8,45+i*12,1,ix==note_selected?accent:ink);}
+            if(note_count==0)draw_text("NO NOTES FOUND",8,62,1,muted);
+            char note_count_label[24];std::snprintf(note_count_label,sizeof(note_count_label),"%d NOTES",note_count);draw_text(note_count_label,8,108,1,muted);
+            draw_text(notes_action==1?"ENTER: NEW NOTE":"ENTER: OPEN NOTE",95,108,1,muted);
+            draw_text("UP/DN SCROLL  N NEW  BKSP BACK",8,124,1,muted);
         } else {
             const char* note_title=std::strrchr(note_filename,'/');
             draw_text(note_title?note_title+1:note_filename,8,25,1,accent);
@@ -863,15 +875,18 @@ void render_app() {
         break;
     case 2:
         draw_text("CALCULATOR",8,27,1,accent);draw_text(calc_buffer,8,49,2,ink);
-        draw_text("NUMBERS + - * / ( )",8,88,1,muted);draw_text("ENTER = RESULT",8,105,1,muted);break;
+        draw_text("P +   M -   X *   D /",8,82,1,muted);draw_text("DIGITS / BRACKETS / DECIMAL",8,96,1,muted);draw_text("ENTER = RESULT  BKSP = DEL",8,111,1,muted);break;
     case 3:
         if(bluetooth_screen){
             draw_text("BLUETOOTH LE",8,25,1,accent);
-            draw_text(ble_scan_active?"SCANNING...":"SCAN FINISHED",130,25,1,muted);
-            for(int i=0;i<5;i++){int ix=ble_device_scroll+i;if(ix>=ble_device_count)break;char row[40];std::snprintf(row,sizeof(row),"%.22s %s",ble_devices[ix],ble_rssi[ix]);draw_text(row,8,43+i*13,1,ix==ble_device_scroll?accent:ink);}
-            if(ble_device_count==0)draw_text(ble_scan_active?"LOOKING FOR DEVICES":"NO DEVICES FOUND",8,58,1,ink);
-            draw_text(store_message,8,111,1,muted);
-            draw_text("ENTER RESCAN  ESC BACK",8,124,1,muted);
+            draw_text(ble_complex_mode?"COMPLEX":"SIMPLE",174,25,1,muted);
+            for(int i=0;i<5;i++){int ix=ble_device_scroll+i;if(ix>=ble_device_count)break;char row[40];
+                if(ble_complex_mode)std::snprintf(row,sizeof(row),"%.17s %s",ble_device_named[ix]?ble_devices[ix]:ble_addresses[ix],ble_rssi[ix]);
+                else std::snprintf(row,sizeof(row),"%.24s",ble_devices[ix]);
+                draw_text(row,8,43+i*13,1,ix==ble_device_scroll?accent:ink);}
+            if(ble_device_count==0)draw_text(ble_scan_active?"LOOKING FOR DEVICES":"NO NAMED DEVICES",8,58,1,ink);
+            draw_text(store_message,8,108,1,muted);
+            draw_text("M MODE  ENTER RESCAN  ESC BACK",8,124,1,muted);
         } else if(wifi_setup_step==1||wifi_setup_step==2||wifi_setup_step==3||wifi_setup_step==4){
             if(wifi_setup_step==3){
                 draw_text("CHOOSE WIFI NETWORK",8,28,1,accent);
@@ -889,19 +904,20 @@ void render_app() {
             }
         } else {
             draw_text("SETTINGS",8,25,1,accent);
-            draw_text(wifi_connected?"WIFI ONLINE":"WIFI OFFLINE",142,25,1,wifi_connected?accent:muted);
-            if(wifi_connected)draw_text(wifi_ip_text,8,35,1,accent);else draw_text(store_message,8,35,1,muted);
-            const char* rows[]={"BRIGHTNESS","THEME","WI-FI SETUP","BLUETOOTH","SOUNDS"};
+            draw_text(wifi_connected?"WIFI: CONNECTED":"WIFI: OFFLINE",8,39,1,wifi_connected?accent:muted);
+            if(wifi_connected)draw_text(wifi_ip_text,150,39,1,accent);
+            const char* rows[]={"BRIGHTNESS","THEME","WI-FI NETWORKS","BLUETOOTH DEVICES","SOUND"};
             for(int i=0;i<5;i++){
                 char item[40];
-                if(i==0)std::snprintf(item,sizeof(item),"BRIGHTNESS: %s",setting_brightness==0?"LOW":setting_brightness==1?"MED":"HIGH");
-                else if(i==1)std::snprintf(item,sizeof(item),"THEME: %s",dark_theme?"DARK":"LIGHT");
-                else if(i==4)std::snprintf(item,sizeof(item),"SOUNDS: %s",sound_enabled?"ON":"OFF");
+                if(i==0)std::snprintf(item,sizeof(item),"BRIGHTNESS  %s",setting_brightness==0?"LOW":setting_brightness==1?"MEDIUM":"HIGH");
+                else if(i==1)std::snprintf(item,sizeof(item),"THEME       %s",dark_theme?"DARK":"LIGHT");
+                else if(i==4)std::snprintf(item,sizeof(item),"SOUND       %s",sound_enabled?"ON":"OFF");
                 else std::snprintf(item,sizeof(item),"%s",rows[i]);
-                draw_text(item,12,43+i*15,1,i==settings_selection?accent:ink);
+                fill_rect(6,49+i*13,228,12,i==settings_selection?rgb565(37,68,75):bg);
+                draw_text(item,12,52+i*13,1,i==settings_selection?accent:ink);
             }
-            draw_text("UP/DOWN SELECT  LEFT/RIGHT CHANGE",8,111,1,muted);
-            draw_text("ENTER OPEN  ESC BACK",8,123,1,muted);
+            draw_text("UP/DN SELECT  LEFT/RIGHT CHANGE",8,117,1,muted);
+            draw_text("ENTER OPEN  ESC BACK",8,128,1,muted);
         }
         break;
     case 4:
@@ -1186,7 +1202,7 @@ void poll_keyboard() {
             ++keypress_count;continue;
         }
         std::uint8_t key=0;
-        char ch=decode_key(row,col,shift_held||caps_lock);
+        char ch=decode_key(row,col,shift_held!=caps_lock);
         // The four physical arrow keys have secondary legends ; , . /.
         // Without Fn they are navigation keys; with Fn they type their legends.
         if(fn_lock){
@@ -1194,7 +1210,8 @@ void poll_keyboard() {
             else if(row==0&&col>=1&&col<=12){ch=0;std::snprintf(last_key_label,sizeof(last_key_label),"F%d",col);}
             else if(row==0&&col==13)key=KEY_DELETE;
         } else {
-            if(row==2&&col==11)key=KEY_UP;       // ; / Up
+            if(row==2&&col==12){key=KEY_ESC;ch=0;} // apostrophe key is Escape without Fn
+            else if(row==2&&col==11)key=KEY_UP;       // ; / Up
             else if(row==3&&col==10)key=KEY_LEFT; // , / Left
             else if(row==3&&col==11)key=KEY_DOWN; // . / Down
             else if(row==3&&col==12)key=KEY_RIGHT;// / / Right
@@ -1227,7 +1244,7 @@ void poll_keyboard() {
         if(active_app<0){
             if(is_up(key)||is_left(key)){selected_app=(selected_app+kAppCount-1)%kAppCount;play_menu_sound();}
             else if(is_down(key)||is_right(key)){selected_app=(selected_app+1)%kAppCount;play_menu_sound();}
-            else if(key==KEY_ENTER){play_menu_sound();active_app=selected_app;if(active_app==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}if(active_app==1){note_editing=false;refresh_notes();}if(active_app==5){refresh_store();}if(active_app==6){if(connect_wifi_from_sd())start_time_sync();}}
+            else if(key==KEY_ENTER){play_menu_sound();active_app=selected_app;if(active_app==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}if(active_app==1){note_editing=false;refresh_notes();}if(active_app==5){refresh_store();}if(active_app==6){last_clock_render_second=-1;}}
             continue;
         }
         if(active_app==0){
@@ -1241,7 +1258,7 @@ void poll_keyboard() {
                 if(is_up(key)){if(note_selected>0)--note_selected;if(note_selected<note_scroll)note_scroll=note_selected;}
                 else if(is_down(key)){if(note_selected+1<note_count)++note_selected;if(note_selected>=note_scroll+5)note_scroll=note_selected-4;}
                 else if(is_left(key)||is_right(key))notes_action=is_left(key)?0:1;
-                else if(key==KEY_ENTER){if(notes_action==1||note_count==0)create_note();else open_note(note_selected);}
+                else if(key==KEY_ENTER){if(notes_action==1)create_note();else if(note_count>0)open_note(note_selected);else std::snprintf(store_message,sizeof(store_message),"NO NOTES YET - PRESS N");}
                 else if(ch=='n'||ch=='N')create_note();
                 else if(key==KEY_BACKSPACE||key==KEY_ESC)active_app=-1;
             } else {
@@ -1254,16 +1271,21 @@ void poll_keyboard() {
             }
         } else if(active_app==2){
             if(key==KEY_ESC)active_app=-1;
-            else if(key==KEY_BACKSPACE){if(calc_showing_result){calc_buffer[0]=0;calc_length=0;calc_showing_result=false;}else if(calc_length>0)calc_buffer[--calc_length]=0;}
-            else if(ch=='c'||ch=='C'){calc_buffer[0]=0;calc_length=0;calc_showing_result=false;}
+            else if(key==KEY_BACKSPACE||key==KEY_DELETE){if(key==KEY_DELETE){calc_buffer[0]=0;calc_length=0;calc_showing_result=false;}else if(calc_length>0){calc_buffer[--calc_length]=0;calc_showing_result=false;}}
             else if(key==KEY_ENTER){calculate();calc_showing_result=true;}
-            else if(ch>=32&&ch<127&&calc_length<(int)sizeof(calc_buffer)-2){if(calc_showing_result){calc_buffer[0]=0;calc_length=0;calc_showing_result=false;}calc_buffer[calc_length++]=ch;calc_buffer[calc_length]=0;}
+            else if(calc_length<(int)sizeof(calc_buffer)-2){
+                char op=0;
+                if(ch=='p'||ch=='P')op='+';else if(ch=='m'||ch=='M')op='-';else if(ch=='x'||ch=='X')op='*';else if(ch=='d'||ch=='D')op='/';
+                const bool allowed=(ch>='0'&&ch<='9')||ch=='.'||ch=='('||ch==')'||ch=='%'||op;
+                if(allowed){if(calc_showing_result){calc_buffer[0]=0;calc_length=0;calc_showing_result=false;}calc_buffer[calc_length++]=op?op:ch;calc_buffer[calc_length]=0;}
+            }
         } else if(active_app==3){
             if(bluetooth_screen){
                 if(key==KEY_ESC||key==KEY_BACKSPACE){stop_ble_scan();bluetooth_screen=false;}
                 else if(key==KEY_ENTER){stop_ble_scan();start_ble_scan();}
                 else if(is_up(key)){ble_device_scroll=std::max(0,ble_device_scroll-1);}
                 else if(is_down(key)){ble_device_scroll=std::min(std::max(0,ble_device_count-5),ble_device_scroll+1);}
+                else if(ch=='m'||ch=='M'){ble_complex_mode=!ble_complex_mode;stop_ble_scan();start_ble_scan();}
             } else if(wifi_setup_step>0){
                 if(key==KEY_ESC){wifi_setup_step=0;}
                 else if(wifi_setup_step==3){
@@ -1317,7 +1339,7 @@ void poll_keyboard() {
                         if(builtin==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}
                         if(builtin==1){note_editing=false;refresh_notes();}
                         if(builtin==5)refresh_store();
-                        if(builtin==6&&connect_wifi_from_sd())start_time_sync();
+                        if(builtin==6)last_clock_render_second=-1;
                     } else if(package_installed(store_ids[store_selected])) {
                         if(!launch_installed_package(store_ids[store_selected]))std::snprintf(store_message,sizeof(store_message),"APP LOAD FAILED");
                     } else install_store_package();
@@ -1423,7 +1445,9 @@ extern "C" void app_main(void) {
             for(int i=1;i<snake_len;i++)if(snake_x[0]==snake_x[i]&&snake_y[0]==snake_y[i])game_over=true;
             if(snake_x[0]==food_x&&snake_y[0]==food_y){if(snake_len<47)++snake_len;++game_score;food_x=(food_x+7)%23;food_y=(food_y+3)%9;}
         }
-        if(old_app!=active_app||old_sel!=selected_app||active_app==6||active_app==7||active_app==11||active_app==13||active_app==5||ui_dirty){render_home();ui_dirty=false;}
+        const int clock_second=(int)std::time(nullptr);
+        const bool clock_tick=(active_app==6&&clock_second!=last_clock_render_second);
+        if(old_app!=active_app||old_sel!=selected_app||clock_tick||active_app==7||active_app==11||active_app==13||active_app==5||ui_dirty){render_home();ui_dirty=false;if(active_app==6)last_clock_render_second=clock_second;}
         if(active_app==1&&note_editing&&note_length>0&&note_length%24==0)save_note();
         vTaskDelay(pdMS_TO_TICKS(60));
     }
