@@ -52,5 +52,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: firmware/cardputer-adv/build/cmair-os-cardputer-adv.bin
+          files: |
+            firmware/cardputer-adv/build/cmair-os-cardputer-adv.bin
+            firmware/cardputer-adv/build/cmair-os-cardputer-adv-app.bin
           generate_release_notes: true
