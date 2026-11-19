@@ -121,7 +121,7 @@ bool package_running=false; char package_title[64]=""; char package_subtitle[96]
 char clock_input[8] = {};
 int clock_len = 0;
 int timer_seconds = 60;
-char timer_input[12]="00:01:00";
+char timer_input[20]="00:01:00";
 bool stopwatch_running=false;
 std::int64_t stopwatch_started_us=0, stopwatch_elapsed_us=0;
 bool timer_running = false;
