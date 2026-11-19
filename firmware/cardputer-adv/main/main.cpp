@@ -435,7 +435,7 @@ void ble_gap_callback(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* para
         }
         break;
     case ESP_GAP_BLE_SCAN_START_COMPLETE_EVT:
-        if(param->scan_start_cmpl.status!=ESP_BT_STATUS_SUCCESS) ble_scan_active=false;
+        if(param->scan_start_cmpl.status!=ESP_BT_STATUS_SUCCESS){ble_scan_active=false;std::snprintf(store_message,sizeof(store_message),"BLE SCAN START FAIL");}
         ui_dirty=true;
         break;
     case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT:
@@ -447,34 +447,40 @@ bool init_bluetooth() {
     if(ble_ready) return true;
     esp_err_t e=nvs_flash_init();
     if(e==ESP_ERR_NVS_NO_FREE_PAGES||e==ESP_ERR_NVS_NEW_VERSION_FOUND){nvs_flash_erase();e=nvs_flash_init();}
-    if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE){ESP_LOGE(kTag,"BT NVS init: %s",esp_err_to_name(e));return false;}
+    if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE){std::snprintf(store_message,sizeof(store_message),"BT NVS INIT FAIL");ESP_LOGE(kTag,"BT NVS init: %s",esp_err_to_name(e));return false;}
     e=esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
     if(e!=ESP_OK && e!=ESP_ERR_NOT_SUPPORTED && e!=ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(kTag,"BT memory release: %s",esp_err_to_name(e)); return false;
+        std::snprintf(store_message,sizeof(store_message),"BT MEMORY RELEASE FAIL");ESP_LOGE(kTag,"BT memory release: %s",esp_err_to_name(e)); return false;
     }
     esp_bt_controller_status_t status=esp_bt_controller_get_status();
     if(status==ESP_BT_CONTROLLER_STATUS_IDLE) {
         esp_bt_controller_config_t cfg=BT_CONTROLLER_INIT_CONFIG_DEFAULT();
         e=esp_bt_controller_init(&cfg);
-        if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) { ESP_LOGE(kTag,"BT controller init: %s",esp_err_to_name(e)); return false; }
+        if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) { std::snprintf(store_message,sizeof(store_message),"BT CTRL INIT FAIL");ESP_LOGE(kTag,"BT controller init: %s",esp_err_to_name(e)); return false; }
     }
     status=esp_bt_controller_get_status();
     if(status==ESP_BT_CONTROLLER_STATUS_INITED) {
         e=esp_bt_controller_enable(ESP_BT_MODE_BLE);
-        if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) { ESP_LOGE(kTag,"BT controller enable: %s",esp_err_to_name(e)); return false; }
+        if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) { std::snprintf(store_message,sizeof(store_message),"BT CTRL ENABLE FAIL");ESP_LOGE(kTag,"BT controller enable: %s",esp_err_to_name(e)); return false; }
     }
     esp_bluedroid_status_t host=esp_bluedroid_get_status();
     if(host==ESP_BLUEDROID_STATUS_UNINITIALIZED) {
         e=esp_bluedroid_init();
-        if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) { ESP_LOGE(kTag,"Bluedroid init: %s",esp_err_to_name(e)); return false; }
+        if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) { std::snprintf(store_message,sizeof(store_message),"BT HOST INIT FAIL");ESP_LOGE(kTag,"Bluedroid init: %s",esp_err_to_name(e)); return false; }
         host=esp_bluedroid_get_status();
     }
     if(host==ESP_BLUEDROID_STATUS_INITIALIZED) {
         e=esp_bluedroid_enable();
-        if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) { ESP_LOGE(kTag,"Bluedroid enable: %s",esp_err_to_name(e)); return false; }
+        if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) { std::snprintf(store_message,sizeof(store_message),"BT HOST ENABLE FAIL");ESP_LOGE(kTag,"Bluedroid enable: %s",esp_err_to_name(e)); return false; }
+    }
+    if(esp_bt_controller_get_status()!=ESP_BT_CONTROLLER_STATUS_ENABLED){
+        std::snprintf(store_message,sizeof(store_message),"BT CTRL NOT ENABLED");return false;
+    }
+    if(esp_bluedroid_get_status()!=ESP_BLUEDROID_STATUS_ENABLED){
+        std::snprintf(store_message,sizeof(store_message),"BT HOST NOT ENABLED");return false;
     }
     e=esp_ble_gap_register_callback(ble_gap_callback);
-    if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) { ESP_LOGE(kTag,"BLE GAP callback: %s",esp_err_to_name(e)); return false; }
+    if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) { std::snprintf(store_message,sizeof(store_message),"BT GAP CALLBACK FAIL");ESP_LOGE(kTag,"BLE GAP callback: %s",esp_err_to_name(e)); return false; }
     ble_ready=true;
     ESP_LOGI(kTag,"Bluetooth LE initialized");
     return true;
@@ -484,7 +490,7 @@ bool start_ble_scan() {
     std::memset(ble_devices,0,sizeof(ble_devices));
     std::memset(ble_rssi,0,sizeof(ble_rssi));
     std::memset(ble_addresses,0,sizeof(ble_addresses));
-    if(!init_bluetooth()) { std::snprintf(store_message,sizeof(store_message),"BLE INIT FAILED"); return false; }
+    if(!init_bluetooth()) return false;
     ble_scan_params.scan_type=BLE_SCAN_TYPE_PASSIVE;
     ble_scan_params.own_addr_type=BLE_ADDR_TYPE_PUBLIC;
     ble_scan_params.scan_filter_policy=BLE_SCAN_FILTER_ALLOW_ALL;
