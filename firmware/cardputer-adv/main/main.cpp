@@ -231,25 +231,28 @@ void fill_round_rect(int x,int y,int w,int h,int radius,std::uint16_t color) {
     }
 }
 void draw_mcaI_logo_splash() {
+    // Match the supplied 240x135 MCAI-OS boot artwork, leaving a clear
+    // green strip at the bottom for the startup instruction.
     const auto green=rgb565(126,217,87), black=rgb565(0,0,0);
     const auto white=rgb565(254,254,254), grey=rgb565(115,115,115);
     const auto frame=rgb565(191,190,191), navy=rgb565(18,0,120);
     std::fill(std::begin(framebuffer),std::end(framebuffer),green);
     const char keys[]="MCAI";
     for(int i=0;i<4;i++) {
-        const int x=5+i*58;
-        fill_round_rect(x+2,7,55,43,8,black);
-        fill_round_rect(x,4,55,43,8,black);
-        fill_round_rect(x+2,6,51,38,7,white);
+        const int x=1+i*59;
+        fill_round_rect(x+2,3,57,48,8,black);
+        fill_round_rect(x,0,57,47,8,black);
+        fill_round_rect(x+2,2,53,42,7,white);
         char letter[2]={keys[i],0};
-        draw_text(letter,x+14,14,4,black);
+        draw_text(letter,x+15,10,4,black);
     }
-    fill_rect(0,54,240,81,black);
-    fill_rect(2,56,236,77,frame);
-    fill_rect(4,58,232,69,grey);
-    fill_rect(4,58,232,14,navy);
-    fill_rect(4,73,232,54,grey);
-    draw_text("OS",77,77,7,black);
+    fill_rect(63,53,114,61,black);
+    fill_rect(65,55,110,57,frame);
+    fill_rect(67,57,106,53,grey);
+    fill_rect(67,57,106,11,navy);
+    fill_rect(67,69,106,41,grey);
+    draw_text("OS",83,69,6,black);
+    draw_text("PRESS ANY BUTTON TO START",42,120,1,black);
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
 }
 
@@ -1384,9 +1387,15 @@ extern "C" void app_main(void) {
     channel.hpoint=0;
     ESP_ERROR_CHECK(ledc_channel_config(&channel));
     init_display();
+    init_keyboard();
     draw_mcaI_logo_splash();
-    vTaskDelay(pdMS_TO_TICKS(1100));
-    init_keyboard();init_audio();init_sd_card();load_settings();seed_store();apply_brightness();render_home();play_tone(660,90);
+    // Keep the boot screen visible until the keyboard receives a key press.
+    keypress_count=0;
+    while(keypress_count==0) {
+        poll_keyboard();
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    init_audio();init_sd_card();load_settings();seed_store();apply_brightness();render_home();play_tone(660,90);
     for(;;){
         const int old_app=active_app,old_sel=selected_app;
         poll_keyboard();
