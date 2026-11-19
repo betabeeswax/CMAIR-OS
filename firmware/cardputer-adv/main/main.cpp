@@ -1187,14 +1187,17 @@ void poll_keyboard() {
         }
         std::uint8_t key=0;
         char ch=decode_key(row,col,shift_held||caps_lock);
+        // The four physical arrow keys have secondary legends ; , . /.
+        // Without Fn they are navigation keys; with Fn they type their legends.
         if(fn_lock){
             if(row==0&&col==0)key=KEY_ESC;
-            else if(row==2&&col==11)key=KEY_UP;
-            else if(row==3&&col==10)key=KEY_LEFT;
-            else if(row==3&&col==11)key=KEY_DOWN;
-            else if(row==3&&col==12)key=KEY_RIGHT;
             else if(row==0&&col>=1&&col<=12){ch=0;std::snprintf(last_key_label,sizeof(last_key_label),"F%d",col);}
             else if(row==0&&col==13)key=KEY_DELETE;
+        } else {
+            if(row==2&&col==11)key=KEY_UP;       // ; / Up
+            else if(row==3&&col==10)key=KEY_LEFT; // , / Left
+            else if(row==3&&col==11)key=KEY_DOWN; // . / Down
+            else if(row==3&&col==12)key=KEY_RIGHT;// / / Right
         }
         if(!key){
             if(row==0&&col==13)key=KEY_BACKSPACE;
