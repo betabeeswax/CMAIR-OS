@@ -90,6 +90,7 @@ char ble_addresses[12][18]={};
 esp_ble_scan_params_t ble_scan_params={};
 char calc_buffer[48] = {};
 int calc_length = 0;
+bool calc_showing_result=false;
 int file_scroll = 0;
 char note_buffer[512] = {};
 int note_length = 0, note_scroll = 0;
@@ -824,6 +825,8 @@ void render_home() {
     draw_text("OS",111,37,1,white);
     draw_text(sd_ready?"SD READY":"NO SD",8,50,1,sd_ready?accent:muted);
     draw_text("APP LAUNCHER",8,61,1,muted);
+    if(caps_lock)draw_text("CAP",188,50,1,accent);
+    if(fn_lock)draw_text("FN",218,50,1,accent);
     const int page=selected_app/kAppsPerPage, pages=(kAppCount+kAppsPerPage-1)/kAppsPerPage;
     for(int row=0;row<4;row++) { const int i=page*kAppsPerPage+row; if(i>=kAppCount) break;
         const int y=73+row*12; fill_rect(7,y,226,11,i==selected_app?selected:card);
@@ -1038,10 +1041,10 @@ void poll_keyboard() {
             }
         } else if(active_app==2){
             if(key==KEY_ESC)active_app=-1;
-            else if(key==KEY_BACKSPACE){if(calc_length>0)calc_buffer[--calc_length]=0;}
-            else if(ch=='c'||ch=='C'){calc_buffer[0]=0;calc_length=0;}
-            else if(key==KEY_ENTER)calculate();
-            else if(ch>=32&&ch<127&&calc_length<(int)sizeof(calc_buffer)-2){calc_buffer[calc_length++]=ch;calc_buffer[calc_length]=0;}
+            else if(key==KEY_BACKSPACE){if(calc_showing_result){calc_buffer[0]=0;calc_length=0;calc_showing_result=false;}else if(calc_length>0)calc_buffer[--calc_length]=0;}
+            else if(ch=='c'||ch=='C'){calc_buffer[0]=0;calc_length=0;calc_showing_result=false;}
+            else if(key==KEY_ENTER){calculate();calc_showing_result=true;}
+            else if(ch>=32&&ch<127&&calc_length<(int)sizeof(calc_buffer)-2){if(calc_showing_result){calc_buffer[0]=0;calc_length=0;calc_showing_result=false;}calc_buffer[calc_length++]=ch;calc_buffer[calc_length]=0;}
         } else if(active_app==3){
             if(bluetooth_screen){
                 if(key==KEY_ESC||key==KEY_BACKSPACE){stop_ble_scan();bluetooth_screen=false;}
