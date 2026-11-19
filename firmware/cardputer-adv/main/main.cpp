@@ -15,6 +15,8 @@
 #include "esp_bt_main.h"
 #include "esp_gap_ble_api.h"
 #include "esp_http_client.h"
+#include "esp_https_ota.h"
+#include "esp_ota_ops.h"
 #include "esp_crt_bundle.h"
 #include "nvs_flash.h"
 #include "cJSON.h"
@@ -122,6 +124,8 @@ bool viewing_file = false;
 char store_names[128][64] = {}; char store_status[128][20] = {}; char store_ids[128][64] = {}; char store_urls[128][256] = {}; char store_hashes[128][65] = {}; size_t store_sizes[128] = {};
 int store_count=0, store_selected=0, store_scroll=0;
 bool store_loading=false;
+bool ota_running=false;
+char ota_message[48]="PRESS ENTER TO CHECK FOR UPDATES";
 char store_message[40]="ADD WIFI.CFG ON SD"; bool wifi_started=false, catalogue_loaded=false, ntp_started=false;
 char catalogue_buffer[32768]={}; size_t catalogue_length=0;
 bool package_running=false; char package_title[64]=""; char package_subtitle[96]=""; char package_id[64]=""; int package_counter=0, package_increment=1;
@@ -142,7 +146,7 @@ bool dark_theme = true;
 bool ui_dirty=true;
 bool boot_button_was_pressed = false;
 constexpr int kAppsPerPage = 4;
-constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT","STOPWATCH"};
+constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT","STOPWATCH","OS UPDATER"};
 constexpr int kAppCount = sizeof(kApps) / sizeof(kApps[0]);
 alignas(4) std::uint16_t framebuffer[kWidth * kHeight];
 
@@ -668,6 +672,45 @@ bool connect_wifi_from_sd() {
     if(!ok||!ssid[0]){std::snprintf(store_message,sizeof(store_message),"INVALID WIFI SETTINGS");return false;}
     return connect_wifi_credentials(ssid,password);
 }
+void ota_update_task(void*) {
+    std::snprintf(ota_message,sizeof(ota_message),"CHECKING WI-FI...");
+    ui_dirty=true;
+    if(!wifi_connected && !connect_wifi_from_sd()) {
+        std::snprintf(ota_message,sizeof(ota_message),"WI-FI FAILED - CHECK SETTINGS");
+        ota_running=false;ui_dirty=true;vTaskDelete(nullptr);return;
+    }
+    std::snprintf(ota_message,sizeof(ota_message),"DOWNLOADING UPDATE...");
+    ui_dirty=true;
+    esp_http_client_config_t http_cfg={};
+    http_cfg.url="https://github.com/betabeeswax/MCAI-OS/releases/download/v0.1.0-alpha/cmair-os-cardputer-adv-app.bin";
+    http_cfg.crt_bundle_attach=esp_crt_bundle_attach;
+    http_cfg.timeout_ms=30000;
+    esp_https_ota_config_t ota_cfg={};
+    ota_cfg.http_config=&http_cfg;
+    const esp_err_t err=esp_https_ota(&ota_cfg);
+    if(err==ESP_OK) {
+        std::snprintf(ota_message,sizeof(ota_message),"UPDATE READY - RESTARTING");
+        ui_dirty=true;
+        vTaskDelay(pdMS_TO_TICKS(700));
+        esp_restart();
+    }
+    std::snprintf(ota_message,sizeof(ota_message),"UPDATE FAILED - TRY AGAIN");
+    ota_running=false;ui_dirty=true;
+    ESP_LOGE(kTag,"OTA update failed: %s",esp_err_to_name(err));
+    vTaskDelete(nullptr);
+}
+void start_ota_update() {
+    if(ota_running)return;
+    ota_running=true;
+    std::snprintf(ota_message,sizeof(ota_message),"STARTING UPDATE...");
+    ui_dirty=true;
+    if(xTaskCreate(ota_update_task,"mcai_ota",8192,nullptr,5,nullptr)!=pdPASS) {
+        ota_running=false;
+        std::snprintf(ota_message,sizeof(ota_message),"UPDATE TASK FAILED");
+        ui_dirty=true;
+    }
+}
+
 bool load_store_catalogue() {
     store_count=0;store_selected=0;store_scroll=0;catalogue_loaded=false;catalogue_length=0;catalogue_buffer[0]=0;
     for(int wait=0;wifi_connecting&&wait<120;wait++)vTaskDelay(pdMS_TO_TICKS(250));
@@ -782,7 +825,7 @@ bool launch_installed_package(const char* id) {
       std::snprintf(package_subtitle,sizeof(package_subtitle),"%s",subtitle->valuestring);
       package_counter=(int)initial->valuedouble;
       package_increment=(int)increment->valuedouble;
-      package_running=true;active_app=14;
+      package_running=true;active_app=15;
     }
     cJSON_Delete(root);return valid;
 }
@@ -889,7 +932,7 @@ void render_app() {
     if(caps_lock)draw_text("CAP",164,7,1,accent);
     if(shift_held)draw_text("SHF",184,7,1,accent);
     if(fn_lock)draw_text("FN",214,7,1,accent);
-    if(active_app==14)draw_text(package_title,100,7,1,ink);else draw_text(kApps[active_app],100,7,1,ink);
+    if(active_app==15)draw_text(package_title,100,7,1,ink);else draw_text(kApps[active_app],100,7,1,ink);
     fill_rect(0,19,kWidth,1,rgb565(44,59,78));
     char line[64];
     switch(active_app) {
@@ -1022,7 +1065,15 @@ void render_app() {
         draw_text(keyboard_ready?"KEYBOARD PASS":"KEYBOARD FAIL",8,30,1,ink);draw_text(sd_ready?"SD MOUNT PASS":"SD MOUNT FAIL",8,48,1,ink);
         std::snprintf(line,sizeof(line),"FREE HEAP %lu",(unsigned long)esp_get_free_heap_size());draw_text(line,8,66,1,ink);
         std::snprintf(line,sizeof(line),"UPTIME %lu SEC",(unsigned long)(esp_timer_get_time()/1000000));draw_text(line,8,84,1,ink);break;
-    case 14: {
+    case 14:
+        draw_text("SYSTEM UPDATER",8,28,1,accent);
+        fill_round_rect(8,42,224,37,5,rgb565(25,43,62));
+        draw_text(ota_running?"UPDATING MCAI-OS":"CHECK FOR OS UPDATE",17,51,1,ink);
+        draw_text(ota_message,8,91,1,muted);
+        draw_text(ota_running?"PLEASE KEEP DEVICE POWERED":"ENTER: CHECK / INSTALL",8,111,1,accent);
+        draw_text("ESC: BACK",8,124,1,muted);
+        break;
+    case 15: {
         char count[32];std::snprintf(count,sizeof(count),"%d",package_counter);
         draw_text(package_subtitle,8,30,1,muted);draw_text(count,8,55,3,accent);
         draw_text("ENTER: +1",8,94,1,ink);draw_text("BACKSPACE: STORE",8,111,1,muted);break;
@@ -1433,6 +1484,10 @@ void poll_keyboard() {
             else if(key==KEY_ENTER){if(stopwatch_running){stopwatch_elapsed_us+=esp_timer_get_time()-stopwatch_started_us;stopwatch_running=false;}else{stopwatch_started_us=esp_timer_get_time();stopwatch_running=true;}}
             else if(ch=='r'||ch=='R'){stopwatch_elapsed_us=0;if(stopwatch_running)stopwatch_started_us=esp_timer_get_time();}
         } else if(active_app==14){
+            if(is_back(key)){if(!ota_running)active_app=-1;}
+            else if(key==KEY_ENTER&&!ota_running)start_ota_update();
+            else if((ch=='r'||ch=='R')&&!ota_running)start_ota_update();
+        } else if(active_app==15){
             if(is_back(key)){package_running=false;active_app=5;}
             else if(key==KEY_ENTER){package_counter=std::min(999999,package_counter+package_increment);}
         } else if(active_app==6){
@@ -1508,7 +1563,10 @@ extern "C" void app_main(void) {
         if(gpio_get_level(GPIO_NUM_0)==0) break;
         vTaskDelay(pdMS_TO_TICKS(20));
     }
-    init_audio();init_sd_card();load_settings();seed_store();apply_brightness();render_home();play_tone(660,90);
+    init_audio();init_sd_card();load_settings();seed_store();apply_brightness();
+    const esp_err_t ota_mark=esp_ota_mark_app_valid_cancel_rollback();
+    if(ota_mark!=ESP_OK&&ota_mark!=ESP_ERR_NOT_FOUND)ESP_LOGW(kTag,"OTA validation mark: %s",esp_err_to_name(ota_mark));
+    render_home();play_tone(660,90);
     for(;;){
         const int old_app=active_app,old_sel=selected_app;
         poll_keyboard();
