@@ -764,6 +764,29 @@ void open_selected_file() {
     FILE* f=std::fopen(path,"r");if(!f)return;
     const size_t n=std::fread(viewer_buffer,1,sizeof(viewer_buffer)-1,f);viewer_buffer[n]=0;std::fclose(f);viewing_file=true;
 }
+int wrapped_line_count(const char* text,int width) {
+    int lines=1,col=0;
+    if(!text)return 0;
+    for(const char* p=text;*p;++p){
+        if(*p=='\n'){++lines;col=0;}
+        else if(++col>=width){++lines;col=0;}
+    }
+    return lines;
+}
+void render_text_page(const char* text,int scroll,int visible,int x,int y,std::uint16_t color) {
+    if(!text)return;
+    int line=0,n=0;char row[37]={};
+    for(const char* p=text;;++p){
+        const bool end=(*p==0);const char c=end?0:*p;
+        if(end||c=='\n'||n==36){
+            if(line>=scroll&&line<scroll+visible)draw_text(row,x,y+(line-scroll)*13,1,color);
+            ++line;n=0;row[0]=0;
+            if(end)break;
+            if(c=='\n')continue;
+        }
+        row[n++]=c;row[n]=0;
+    }
+}
 int note_visual_line_count() {
     int lines=1,col=0;
     for(int i=0;i<note_length;i++) {
@@ -802,7 +825,7 @@ void render_app() {
     char line[64];
     switch(active_app) {
     case 0:
-        if(viewing_file){draw_text("FILE VIEWER",8,27,1,accent);const int viewer_lines=((int)std::strlen(viewer_buffer)+35)/36;for(int i=0;i<5;i++){char row[40]={};const int pos=(file_scroll+i)*36;if(pos<(int)std::strlen(viewer_buffer))std::strncpy(row,viewer_buffer+pos,36);draw_text(row,8,43+i*13,1,ink);}char page[32];std::snprintf(page,sizeof(page),"LINE %d/%d",std::min(file_scroll+1,std::max(1,viewer_lines)),std::max(1,viewer_lines));draw_text(page,8,112,1,muted);draw_text("UP/DOWN SCROLL BKSP CLOSE",8,124,1,muted);}
+        if(viewing_file){draw_text("FILE VIEWER",8,27,1,accent);const int viewer_lines=wrapped_line_count(viewer_buffer,36);render_text_page(viewer_buffer,file_scroll,5,8,43,ink);char page[32];std::snprintf(page,sizeof(page),"LINE %d/%d",std::min(file_scroll+1,std::max(1,viewer_lines)),std::max(1,viewer_lines));draw_text(page,8,112,1,muted);draw_text("UP/DOWN SCROLL BKSP CLOSE",8,124,1,muted);}
         else {draw_text(current_dir,8,25,1,accent);for(int i=0;i<5;i++){int ix=file_scroll+i;if(ix>=file_count)break;std::snprintf(line,sizeof(line),"%c %.20s",file_is_dir[ix]?'>':' ',file_names[ix]);draw_text(line,8,42+i*14,1,ix==file_selected?accent:ink);}draw_text("UP/DOWN SELECT ENTER OPEN",8,112,1,muted);}
         break;
     case 1:
@@ -1184,7 +1207,7 @@ void poll_keyboard() {
             continue;
         }
         if(active_app==0){
-            if(viewing_file){if(is_back(key)){viewing_file=false;file_scroll=0;}else if(is_up(key)||is_left(key))file_scroll=std::max(0,file_scroll-1);else if(is_down(key)||is_right(key)){const int lines=((int)std::strlen(viewer_buffer)+35)/36;file_scroll=std::min(std::max(0,lines-5),file_scroll+1);}}
+            if(viewing_file){if(is_back(key)){viewing_file=false;file_scroll=0;}else if(is_up(key)||is_left(key))file_scroll=std::max(0,file_scroll-1);else if(is_down(key)||is_right(key)){const int lines=wrapped_line_count(viewer_buffer,36);file_scroll=std::min(std::max(0,lines-5),file_scroll+1);}}
             else if(is_back(key)){if(std::strcmp(current_dir,"/sdcard")!=0){char* slash=std::strrchr(current_dir,'/');if(slash&&slash!=current_dir)*slash=0;else std::strcpy(current_dir,"/sdcard");refresh_files();}else active_app=-1;}
             else if(is_up(key)||is_left(key)){if(file_selected>0)--file_selected;if(file_selected<file_scroll)file_scroll=file_selected;}
             else if(is_down(key)||is_right(key)){if(file_selected+1<file_count)++file_selected;if(file_selected>=file_scroll+5)file_scroll=file_selected-4;}
