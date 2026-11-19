@@ -212,6 +212,11 @@ void draw_text(const char* text, int x, int y, int scale, std::uint16_t color) {
     }
 }
 
+void draw_text_tail(const char* text,int x,int y,int max_chars,int scale,std::uint16_t color) {
+    if(!text)return;
+    const size_t n=std::strlen(text);
+    draw_text(n>(size_t)max_chars?text+n-max_chars:text,x,y,scale,color);
+}
 void fill_round_rect(int x,int y,int w,int h,int radius,std::uint16_t color) {
     const int r=std::max(0,std::min(radius,std::min(w,h)/2));
     for(int py=0;py<h;py++) for(int px=0;px<w;px++) {
@@ -304,6 +309,7 @@ void refresh_notes() {
     }
     note_selected=std::min(note_selected,std::max(0,note_count-1));
     notes_action=note_count>0?0:1;
+    std::snprintf(store_message,sizeof(store_message),"SELECT OPEN OR NEW NOTE");
 }
 bool save_note() {
     if(!sd_ready || !note_filename[0]){std::snprintf(store_message,sizeof(store_message),"NOTE NOT SAVED - NO SD");return false;}
@@ -835,8 +841,8 @@ void render_app() {
             } else {
                 const bool entering_ssid=(wifi_setup_step==1);
                 draw_text(entering_ssid?"WIFI NETWORK NAME":"WIFI PASSWORD",8,29,1,accent);
-                if(entering_ssid)draw_text(wifi_ssid_input,8,52,1,ink);
-                else draw_text(wifi_password_input,8,52,1,ink);
+                if(entering_ssid)draw_text_tail(wifi_ssid_input,8,52,36,1,ink);
+                else draw_text_tail(wifi_password_input,8,52,36,1,ink);
                 draw_text("TYPE USING KEYBOARD",8,78,1,muted);
                 draw_text(entering_ssid?"ENTER: NEXT":"PASSWORD SHOWN",8,98,1,muted);
                 draw_text("ESC: CANCEL  BKSP: DELETE",8,116,1,muted);
@@ -854,6 +860,7 @@ void render_app() {
                 draw_text(item,12,43+i*15,1,i==settings_selection?accent:ink);
             }
             draw_text("UP/DOWN SELECT  LEFT/RIGHT CHANGE",8,111,1,muted);
+            if(wifi_connected)draw_text(wifi_ip_text,158,111,1,accent);
             draw_text("ENTER OPEN  ESC BACK",8,123,1,muted);
         }
         break;
