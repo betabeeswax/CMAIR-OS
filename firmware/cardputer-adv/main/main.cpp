@@ -1119,8 +1119,8 @@ void render_app() {
                 fill_rect(6,59+i*11,228,10,i==settings_selection?rgb565(37,68,75):bg);
                 draw_text(item,12,60+i*11,1,i==settings_selection?accent:ink);
             }
-            draw_text("UP/DN SELECT  LEFT/RIGHT CHANGE",8,119,1,muted);
-            draw_text("ENTER OPEN  ESC BACK",8,130,1,muted);
+            draw_text("UP/DN SELECT  LEFT/RIGHT CHANGE",8,117,1,muted);
+            draw_text("ENTER OPEN  ESC BACK",8,128,1,muted);
         }
         break;
     case 4:
