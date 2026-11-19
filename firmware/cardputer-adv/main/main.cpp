@@ -56,9 +56,12 @@ constexpr gpio_num_t kLcdCs = GPIO_NUM_37;
 constexpr gpio_num_t kI2cSda = GPIO_NUM_8;
 constexpr gpio_num_t kI2cScl = GPIO_NUM_9;
 constexpr std::uint8_t kKeyboardAddress = 0x34;
-constexpr std::uint8_t KEY_ESC=1, KEY_FN=3, KEY_CAPS=7, KEY_UP=57, KEY_DOWN=58,
-                        KEY_LEFT=54, KEY_RIGHT=64, KEY_BACKSPACE=65, KEY_ENTER=67;
+// Normalized key actions produced from the Cardputer ADV's remapped 4x14 matrix.
+constexpr std::uint8_t KEY_ESC=1, KEY_FN=2, KEY_CAPS=3, KEY_UP=4, KEY_DOWN=5,
+                        KEY_LEFT=6, KEY_RIGHT=7, KEY_BACKSPACE=8, KEY_ENTER=9,
+                        KEY_TAB=10, KEY_CTRL=11, KEY_ALT=12, KEY_OPT=13, KEY_DELETE=14;
 bool caps_lock = false;
+bool shift_held = false;
 bool fn_lock = false;
 bool is_up(std::uint8_t k){return k==KEY_UP;}
 bool is_down(std::uint8_t k){return k==KEY_DOWN;}
@@ -100,6 +103,7 @@ int note_count=0, note_selected=0;
 char note_filename[112] = {};
 bool note_editing=false;
 char last_char = '-';
+char last_key_label[20] = "NONE";
 unsigned keypress_count = 0;
 char current_dir[160] = "/sdcard";
 char file_names[32][64] = {};
@@ -735,7 +739,8 @@ void render_app() {
     const auto ink=dark_theme?white:rgb565(20,30,45);
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
     draw_text("MCAI",8,7,1,accent);draw_text("OS",39,10,1,muted);
-    if(caps_lock)draw_text("CAP",184,7,1,accent);
+    if(caps_lock)draw_text("CAP",164,7,1,accent);
+    if(shift_held)draw_text("SHF",184,7,1,accent);
     if(fn_lock)draw_text("FN",214,7,1,accent);
     if(active_app==14)draw_text(package_title,100,7,1,ink);else draw_text(kApps[active_app],100,7,1,ink);
     fill_rect(0,19,kWidth,1,rgb565(44,59,78));
@@ -830,9 +835,9 @@ void render_app() {
         std::snprintf(line,sizeof(line),"%02d:%02d",left/60,left%60);draw_text("COUNTDOWN TIMER",8,27,1,accent);draw_text(line,8,49,3,ink);
         draw_text(timer_running?"RUNNING":"PAUSED",8,91,1,muted);draw_text("UP/DOWN 10 SEC ENTER START",8,110,1,muted);break;}
     case 8:
-        draw_text("KEYBOARD TEST",8,27,1,accent);std::snprintf(line,sizeof(line),"LAST KEY: %c",last_char);draw_text(line,8,49,1,ink);
+        draw_text("KEYBOARD TEST",8,27,1,accent);draw_text("LAST KEY:",8,48,1,muted);draw_text(last_key_label,68,48,1,ink);
         std::snprintf(line,sizeof(line),"KEY EVENTS: %lu",(unsigned long)keypress_count);draw_text(line,8,69,1,ink);
-        draw_text("TYPE ANY KEY TO TEST",8,95,1,muted);break;
+        draw_text("SHIFT=CAPS FN=ARROWS",8,91,1,muted);draw_text("TEST ALL 56 KEYS",8,105,1,muted);break;
     case 9: {
         if(sd_ready){draw_text("SD CARD MOUNTED",8,35,1,accent);draw_text("FILESYSTEM FAT",8,54,1,ink);draw_text("USE FILE MANAGER",8,73,1,muted);}else draw_text("SD CARD NOT MOUNTED",8,43,1,ink);break;}
     case 10:
@@ -877,7 +882,8 @@ void render_home() {
     draw_text("OS",111,37,1,white);
     draw_text(sd_ready?"SD READY":"NO SD",8,50,1,sd_ready?accent:muted);
     draw_text("APP LAUNCHER",8,61,1,muted);
-    if(caps_lock)draw_text("CAP",188,50,1,accent);
+    if(caps_lock)draw_text("CAP",166,50,1,accent);
+    if(shift_held)draw_text("SHF",188,50,1,accent);
     if(fn_lock)draw_text("FN",218,50,1,accent);
     const int page=selected_app/kAppsPerPage, pages=(kAppCount+kAppsPerPage-1)/kAppsPerPage;
     for(int row=0;row<4;row++) { const int i=page*kAppsPerPage+row; if(i>=kAppCount) break;
@@ -1032,40 +1038,83 @@ void init_sd_card() {
     else ESP_LOGW(kTag,"microSD unavailable: %s",esp_err_to_name(err));
 }
 
-char decode_key(int row, int col) {
-    static const unsigned char keys[4][14] = {
-        {126,49,50,51,52,53,54,55,56,57,48,45,61,8},
-        {9,113,119,101,114,116,121,117,105,111,112,91,93,92},
-        {0,0,97,115,100,102,103,104,106,107,108,59,39,10},
-        {0,0,0,122,120,99,118,98,110,109,44,46,47,32}
+char decode_key(int row, int col, bool shifted) {
+    static const char normal[4][14] = {
+        {'`','1','2','3','4','5','6','7','8','9','0','-','=','\0'},
+        {'\0','q','w','e','r','t','y','u','i','o','p','[',']','\\'},
+        {'\0','\0','a','s','d','f','g','h','j','k','l',';', '\'','\0'},
+        {'\0','\0','\0','z','x','c','v','b','n','m',',','.','/',' '}
     };
-    return keys[row][col] ? static_cast<char>(keys[row][col]) : 0;
+    static const char upper[4][14] = {
+        {'~','!','@','#','$','%','^','&','*','(',')','_','+','\0'},
+        {'\0','Q','W','E','R','T','Y','U','I','O','P','{','}','|'},
+        {'\0','\0','A','S','D','F','G','H','J','K','L',':','"','\0'},
+        {'\0','\0','\0','Z','X','C','V','B','N','M','<','>','?',' '}
+    };
+    if(row<0||row>=4||col<0||col>=14)return 0;
+    return shifted?upper[row][col]:normal[row][col];
 }
-
 void poll_keyboard() {
     if(!keyboard_ready)return;
     std::uint8_t count=0;if(keyboard_read(0x03,&count)!=ESP_OK)return;count&=0x0F;
     while(count--){
         std::uint8_t event=0;if(keyboard_read(0x04,&event)!=ESP_OK||event==0)break;
-        if((event&0x80)==0)continue; // TCA8418: bit 7 = key press, 0 = release.
-        const std::uint8_t key=event&0x7F;
+        const bool pressed=(event&0x80)!=0;
+        const int raw=(event&0x7F);
+        if(raw<=0)continue;
+        const int raw_index=raw-1, raw_row=raw_index/10, raw_col=raw_index%10;
+        // TCA8418 raw FIFO positions are remapped exactly as M5Stack's ADV driver.
+        const int row=(raw_col+4)%4, col=raw_row*2+(raw_col>3?1:0);
+        if(row<0||row>=4||col<0||col>=14)continue;
         ui_dirty=true;
-        if(audio_ready&&sound_enabled)play_tone(1250,10);
-        const int ix=key>0?key-1:0, rr=ix/10, rc=ix%10;
-        const int col=rr*2+(rc>3?1:0),row=(rc+4)%4;
-        char ch=(row>=0&&row<4&&col>=0&&col<14)?decode_key(row,col):0;
-        // The ADV's Aa key is Caps Lock; Fn changes the alternate key layer.
-        if(key==KEY_CAPS){caps_lock=!caps_lock;ch=0;}
-        else if(key==KEY_FN){fn_lock=!fn_lock;ch=0;}
-        if(key==KEY_UP||key==KEY_DOWN||key==KEY_LEFT||key==KEY_RIGHT||
-           key==KEY_ESC||key==KEY_BACKSPACE||key==KEY_ENTER) ch=0;
-        if(ch>='a'&&ch<='z'&&caps_lock) ch=static_cast<char>(ch-'a'+'A');
-        if(fn_lock){
-            const char* normal="1234567890-=";
-            const char* shifted="!@#$%^&*()_+";
-            for(int i=0;normal[i];++i) if(ch==normal[i]) ch=shifted[i];
+        if(!pressed){
+            if(row==2&&col==0)fn_lock=false;
+            if(row==2&&col==1)shift_held=false;
+            continue;
         }
-        last_char=ch?ch:(key==KEY_UP?'^':key==KEY_DOWN?'v':key==KEY_LEFT?'<':key==KEY_RIGHT?'>':'?');++keypress_count;
+        if(audio_ready&&sound_enabled)play_tone(1250,10);
+        if(row==2&&col==0){fn_lock=true;std::snprintf(last_key_label,sizeof(last_key_label),"FN");++keypress_count;continue;}
+        if(row==2&&col==1){
+            if(fn_lock)caps_lock=!caps_lock;
+            else shift_held=true;
+            std::snprintf(last_key_label,sizeof(last_key_label),caps_lock?"CAPS":"SHIFT");
+            ++keypress_count;continue;
+        }
+        std::uint8_t key=0;
+        char ch=decode_key(row,col,shift_held||caps_lock);
+        if(fn_lock){
+            if(row==0&&col==0)key=KEY_ESC;
+            else if(row==2&&col==11)key=KEY_UP;
+            else if(row==3&&col==10)key=KEY_LEFT;
+            else if(row==3&&col==11)key=KEY_DOWN;
+            else if(row==3&&col==12)key=KEY_RIGHT;
+            else if(row==0&&col>=1&&col<=12){ch=0;std::snprintf(last_key_label,sizeof(last_key_label),"F%d",col);}
+            else if(row==0&&col==13)key=KEY_DELETE;
+        }
+        if(!key){
+            if(row==0&&col==13)key=KEY_BACKSPACE;
+            else if(row==1&&col==0)key=KEY_TAB;
+            else if(row==2&&col==13)key=KEY_ENTER;
+            else if(row==3&&col==0)key=KEY_CTRL;
+            else if(row==3&&col==1)key=KEY_OPT;
+            else if(row==3&&col==2)key=KEY_ALT;
+        }
+        if(key==KEY_ESC)std::snprintf(last_key_label,sizeof(last_key_label),"ESC");
+        else if(key==KEY_UP)std::snprintf(last_key_label,sizeof(last_key_label),"UP");
+        else if(key==KEY_DOWN)std::snprintf(last_key_label,sizeof(last_key_label),"DOWN");
+        else if(key==KEY_LEFT)std::snprintf(last_key_label,sizeof(last_key_label),"LEFT");
+        else if(key==KEY_RIGHT)std::snprintf(last_key_label,sizeof(last_key_label),"RIGHT");
+        else if(key==KEY_BACKSPACE)std::snprintf(last_key_label,sizeof(last_key_label),"BACKSPACE");
+        else if(key==KEY_ENTER)std::snprintf(last_key_label,sizeof(last_key_label),"ENTER");
+        else if(key==KEY_TAB)std::snprintf(last_key_label,sizeof(last_key_label),"TAB");
+        else if(key==KEY_CTRL)std::snprintf(last_key_label,sizeof(last_key_label),"CTRL");
+        else if(key==KEY_ALT)std::snprintf(last_key_label,sizeof(last_key_label),"ALT");
+        else if(key==KEY_OPT)std::snprintf(last_key_label,sizeof(last_key_label),"OPT");
+        else if(key==KEY_DELETE)std::snprintf(last_key_label,sizeof(last_key_label),"DELETE");
+        else if(ch)std::snprintf(last_key_label,sizeof(last_key_label),"%c",ch);
+        else std::snprintf(last_key_label,sizeof(last_key_label),"FN KEY");
+        last_char=ch?ch:(key==KEY_UP?'^':key==KEY_DOWN?'v':key==KEY_LEFT?'<':key==KEY_RIGHT?'>':'?');
+        ++keypress_count;
         if(active_app<0){
             if(is_up(key)||is_left(key))selected_app=(selected_app+kAppCount-1)%kAppCount;
             else if(is_down(key)||is_right(key))selected_app=(selected_app+1)%kAppCount;
