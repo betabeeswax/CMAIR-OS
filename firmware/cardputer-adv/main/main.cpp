@@ -303,6 +303,7 @@ void refresh_notes() {
         char tmp[40];std::memcpy(tmp,note_files[i],sizeof(tmp));std::memcpy(note_files[i],note_files[j],sizeof(tmp));std::memcpy(note_files[j],tmp,sizeof(tmp));
     }
     note_selected=std::min(note_selected,std::max(0,note_count-1));
+    notes_action=note_count>0?0:1;
 }
 bool save_note() {
     if(!sd_ready || !note_filename[0]){std::snprintf(store_message,sizeof(store_message),"NOTE NOT SAVED - NO SD");return false;}
@@ -1158,18 +1159,19 @@ void poll_keyboard() {
             else if(key==KEY_ENTER)open_selected_file();
         } else if(active_app==1){
             if(!note_editing){
-                if(is_up(key)||is_left(key)){if(note_selected>0)--note_selected;if(note_selected<note_scroll)note_scroll=note_selected;}
-                else if(is_down(key)||is_right(key)){if(note_selected+1<note_count)++note_selected;if(note_selected>=note_scroll+6)note_scroll=note_selected-5;}
-                else if(key==KEY_ENTER)open_note(note_selected);
+                if(is_up(key)){if(note_selected>0)--note_selected;if(note_selected<note_scroll)note_scroll=note_selected;}
+                else if(is_down(key)){if(note_selected+1<note_count)++note_selected;if(note_selected>=note_scroll+5)note_scroll=note_selected-4;}
+                else if(is_left(key)||is_right(key))notes_action=is_left(key)?0:1;
+                else if(key==KEY_ENTER){if(notes_action==1||note_count==0)create_note();else open_note(note_selected);}
                 else if(ch=='n'||ch=='N')create_note();
                 else if(key==KEY_BACKSPACE||key==KEY_ESC)active_app=-1;
             } else {
-                if(key==KEY_ESC){save_note();note_editing=false;refresh_notes();}
+                if(key==KEY_ESC||(key==KEY_ENTER&&fn_lock)){save_note();note_editing=false;refresh_notes();notes_action=0;}
                 else if(is_up(key)){note_scroll=std::max(0,note_scroll-1);}
                 else if(is_down(key)){note_scroll=std::min(std::max(0,note_visual_line_count()-6),note_scroll+1);}
                 else if(key==KEY_BACKSPACE){if(note_length>0){--note_length;note_buffer[note_length]=0;save_note();}}
                 else if(key==KEY_ENTER&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]='\n';note_buffer[note_length]=0;note_scroll=std::max(0,note_visual_line_count()-6);save_note();}
-                else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;note_scroll=std::max(0,note_length/35-5);save_note();}
+                else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;note_scroll=std::max(0,note_visual_line_count()-6);save_note();}
             }
         } else if(active_app==2){
             if(key==KEY_ESC)active_app=-1;
