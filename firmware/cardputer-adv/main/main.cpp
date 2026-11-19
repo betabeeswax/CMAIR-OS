@@ -193,12 +193,15 @@ const std::uint8_t* glyph(char c) {
     static const std::uint8_t bs[5]={2,4,8,16,32}, brace_l[5]={8,54,65,65,0}, brace_r[5]={0,65,65,54,8};
     static const std::uint8_t dollar[5]={18,42,127,42,36}, tilde[5]={4,2,4,8,4}, tick[5]={0,1,2,0,0};
     switch(c){
-        case '-':return dash;case '+':return plus;case '*':return star;case '/':return slash;
-        case '(':return lp;case ')':return rp;case '=':return eq;case '.':return dot;
-        case ',':return comma;case ':':return colon;case ';':return semi;case '_':return under;
-        case '!':return bang;case '?':return question;case '[':return lb;case ']':return rb;
-        case '"':return quote;case 0x27:return apos;case '<':return less;case '>':return greater;
-        case '@':return at;case '#':return hash;case 'case '|':return pipe;case 0x5c:return bs;case '{':return brace_l;case '}':return brace_r;case '~':return tilde;case 0x60:return tick;default:return blank;
+        case '-':return dash; case '+':return plus; case '*':return star; case '/':return slash;
+        case '(':return lp; case ')':return rp; case '=':return eq; case '.':return dot;
+        case ',':return comma; case ':':return colon; case ';':return semi; case '_':return under;
+        case '!':return bang; case '?':return question; case '[':return lb; case ']':return rb;
+        case '"':return quote; case 0x27:return apos; case '<':return less; case '>':return greater;
+        case '@':return at; case '#':return hash; case '$':return dollar; case '%':return percent;
+        case '&':return amp; case '^':return caret; case '|':return pipe; case 0x5c:return bs;
+        case '{':return brace_l; case '}':return brace_r; case '~':return tilde; case 0x60:return tick;
+        default:return blank;
     }
 }
 
@@ -977,6 +980,7 @@ void render_home() {
     fill_rect(6,36,228,8,rgb565(18,0,120));
     draw_text("OS",111,37,1,white);
     draw_text(sd_ready?"SD READY":"NO SD",8,50,1,sd_ready?accent:muted);
+    draw_text(wifi_connected?"WIFI ON":"WIFI OFF",142,50,1,wifi_connected?accent:muted);
     draw_text("APP LAUNCHER",8,61,1,muted);
     if(caps_lock)draw_text("CAP",166,50,1,accent);
     if(shift_held)draw_text("SHF",188,50,1,accent);
