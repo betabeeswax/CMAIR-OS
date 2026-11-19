@@ -906,7 +906,7 @@ bool launch_installed_package(const char* id) {
       std::snprintf(package_subtitle,sizeof(package_subtitle),"%s",subtitle->valuestring);
       package_counter=(int)initial->valuedouble;
       package_increment=(int)increment->valuedouble;
-      package_game=game_type;std::snprintf(package_result,sizeof(package_result),"");
+      package_game=game_type;package_result[0]=0;
       package_running=true;active_app=16;
     }
     cJSON_Delete(root);return valid;
