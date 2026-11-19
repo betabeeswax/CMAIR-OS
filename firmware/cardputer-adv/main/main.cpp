@@ -107,7 +107,7 @@ int file_scroll = 0;
 char note_buffer[512] = {};
 int note_length = 0, note_scroll = 0;
 char note_files[16][40] = {};
-int note_count=0, note_selected=0, notes_action=1;
+int note_count=0, note_selected=0, notes_action=1; // 1 = Add Note button, 0 = note list
 char note_filename[112] = {};
 bool note_editing=false;
 char last_char = '-';
@@ -142,7 +142,7 @@ bool dark_theme = true;
 bool ui_dirty=true;
 bool boot_button_was_pressed = false;
 constexpr int kAppsPerPage = 4;
-constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","SNAKE","ABOUT","STOPWATCH"};
+constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT","STOPWATCH"};
 constexpr int kAppCount = sizeof(kApps) / sizeof(kApps[0]);
 alignas(4) std::uint16_t framebuffer[kWidth * kHeight];
 
@@ -181,8 +181,22 @@ const std::uint8_t* glyph(char c) {
         {0x3C,0x4A,0x49,0x49,0x30},{0x01,0x71,0x09,0x05,0x03},
         {0x36,0x49,0x49,0x49,0x36},{0x06,0x49,0x49,0x29,0x1E}
     };
+    // Standard 5x7 lowercase glyphs. Each value is one vertical column;
+    // keep the same 7-pixel height and 6-pixel character advance as capitals.
     static const std::uint8_t lowercase[26][5] = {
-        {0,0,30,1,30},{64,64,94,81,110},{0,0,30,65,30},{1,1,31,65,62},{0,30,33,63,30},{14,16,60,16,16},{0,30,33,31,1},{64,64,94,81,81},{0,64,0,64,64},{0,32,0,33,30},{64,68,72,80,96},{0,64,64,64,64},{0,118,73,73,73},{0,94,81,81,81},{0,30,65,65,30},{0,94,81,94,64},{0,30,65,31,1},{0,94,80,64,64},{0,31,60,3,62},{16,16,60,16,14},{0,65,65,65,62},{0,65,34,20,8},{0,65,73,85,34},{0,65,20,8,20},{0,65,34,20,8},{0,63,8,16,63}
+        {0x20,0x54,0x54,0x54,0x78}, {0x7F,0x48,0x44,0x44,0x38},
+        {0x38,0x44,0x44,0x44,0x20}, {0x38,0x44,0x44,0x48,0x7F},
+        {0x38,0x54,0x54,0x54,0x18}, {0x08,0x7E,0x09,0x01,0x02},
+        {0x0C,0x52,0x52,0x52,0x3E}, {0x7F,0x08,0x04,0x04,0x78},
+        {0x00,0x44,0x7D,0x40,0x00}, {0x20,0x40,0x44,0x3D,0x00},
+        {0x7F,0x10,0x28,0x44,0x00}, {0x00,0x41,0x7F,0x40,0x00},
+        {0x7C,0x04,0x18,0x04,0x78}, {0x7C,0x08,0x04,0x04,0x78},
+        {0x38,0x44,0x44,0x44,0x38}, {0x7C,0x14,0x14,0x14,0x08},
+        {0x08,0x14,0x14,0x18,0x7C}, {0x7C,0x08,0x04,0x04,0x08},
+        {0x48,0x54,0x54,0x54,0x20}, {0x04,0x3F,0x44,0x40,0x20},
+        {0x3C,0x40,0x40,0x20,0x7C}, {0x1C,0x20,0x40,0x20,0x1C},
+        {0x3C,0x40,0x30,0x40,0x3C}, {0x44,0x28,0x10,0x28,0x44},
+        {0x0C,0x50,0x50,0x50,0x3C}, {0x44,0x64,0x54,0x4C,0x44}
     };
     if (c >= 'a' && c <= 'z') return lowercase[c - 'a'];
     if (c >= 'A' && c <= 'Z') return letters[c - 'A'];
@@ -325,8 +339,8 @@ void refresh_notes() {
     }
     note_selected=std::min(note_selected,std::max(0,note_count-1));
     note_scroll=0;
-    notes_action=0;
-    std::snprintf(store_message,sizeof(store_message),"SELECT OPEN OR NEW NOTE");
+    notes_action=1;
+    std::snprintf(store_message,sizeof(store_message),"ADD A NOTE OR SELECT ONE BELOW");
 }
 bool save_note() {
     if(!sd_ready || !note_filename[0]){std::snprintf(store_message,sizeof(store_message),"NOTE NOT SAVED - NO SD");return false;}
@@ -896,13 +910,19 @@ void render_app() {
     case 1:
         if(!note_editing){
             draw_text("MY NOTES",8,25,1,accent);
-            fill_round_rect(171,22,61,16,3,notes_action==1?accent:muted);
-            draw_text("+ NEW",180,27,1,bg);
-            for(int i=0;i<5;i++){int ix=note_scroll+i;if(ix>=note_count)break;draw_text(note_files[ix],8,45+i*12,1,ix==note_selected?accent:ink);}
-            if(note_count==0)draw_text("NO NOTES FOUND",8,62,1,muted);
-            char note_count_label[24];std::snprintf(note_count_label,sizeof(note_count_label),"%d NOTES",note_count);draw_text(note_count_label,8,108,1,muted);
-            draw_text(notes_action==1?"ENTER: NEW NOTE":"ENTER: OPEN NOTE",95,108,1,muted);
-            draw_text("UP/DN SCROLL  N NEW  BKSP BACK",8,124,1,muted);
+            fill_round_rect(151,22,81,17,4,notes_action==1?accent:muted);
+            draw_text("+ ADD NOTE",158,27,1,notes_action==1?bg:ink);
+            fill_rect(8,43,224,1,rgb565(44,59,78));
+            for(int i=0;i<5;i++){
+                const int ix=note_scroll+i;
+                if(ix>=note_count)break;
+                fill_round_rect(8,47+i*12,224,11,2,ix==note_selected&&notes_action==0?rgb565(37,68,75):bg);
+                draw_text(note_files[ix],14,49+i*12,1,ix==note_selected&&notes_action==0?accent:ink);
+            }
+            if(note_count==0)draw_text("NO SAVED NOTES YET",14,63,1,muted);
+            char note_count_label[24];std::snprintf(note_count_label,sizeof(note_count_label),"%d NOTES",note_count);draw_text(note_count_label,8,111,1,muted);
+            draw_text("UP/DN MOVE  ENTER OPEN",104,111,1,muted);
+            draw_text("N: NEW  BKSP: BACK",8,124,1,muted);
         } else {
             const char* note_title=std::strrchr(note_filename,'/');
             draw_text(note_title?note_title+1:note_filename,8,25,1,accent);
@@ -942,8 +962,8 @@ void render_app() {
             }
         } else {
             draw_text("SETTINGS",8,25,1,accent);
-            draw_text(wifi_connected?"WIFI: CONNECTED":(wifi_connecting?"WIFI: CONNECTING":"WIFI: OFFLINE"),8,39,1,wifi_connected?accent:(wifi_connecting?accent:muted));
-            if(wifi_connected)draw_text(wifi_ip_text,150,39,1,accent);
+            draw_text(wifi_connected?"WI-FI CONNECTED":(wifi_connecting?"WI-FI CONNECTING":"WI-FI OFFLINE"),8,39,1,wifi_connected?accent:(wifi_connecting?accent:muted));
+            if(wifi_connected)draw_text(wifi_ip_text,8,49,1,accent);
             const char* rows[]={"BRIGHTNESS","THEME","WI-FI NETWORKS","BLUETOOTH DEVICES","SOUND"};
             for(int i=0;i<5;i++){
                 char item[40];
@@ -951,11 +971,11 @@ void render_app() {
                 else if(i==1)std::snprintf(item,sizeof(item),"THEME       %s",dark_theme?"DARK":"LIGHT");
                 else if(i==4)std::snprintf(item,sizeof(item),"SOUND       %s",sound_enabled?"ON":"OFF");
                 else std::snprintf(item,sizeof(item),"%s",rows[i]);
-                fill_rect(6,49+i*13,228,12,i==settings_selection?rgb565(37,68,75):bg);
-                draw_text(item,12,52+i*13,1,i==settings_selection?accent:ink);
+                fill_rect(6,59+i*11,228,10,i==settings_selection?rgb565(37,68,75):bg);
+                draw_text(item,12,60+i*11,1,i==settings_selection?accent:ink);
             }
-            draw_text("UP/DN SELECT  LEFT/RIGHT CHANGE",8,117,1,muted);
-            draw_text("ENTER OPEN  ESC BACK",8,128,1,muted);
+            draw_text("UP/DN SELECT  LEFT/RIGHT CHANGE",8,119,1,muted);
+            draw_text("ENTER OPEN  ESC BACK",8,130,1,muted);
         }
         break;
     case 4:
@@ -1008,9 +1028,24 @@ void render_app() {
         draw_text("ENTER: +1",8,94,1,ink);draw_text("BACKSPACE: STORE",8,111,1,muted);break;
     }
     case 11:
-        draw_text("SNAKE - ARROWS TO MOVE",8,25,1,accent);
-        if(!game_started){draw_text("ENTER TO START",8,58,1,ink);draw_text("EAT FOOD / AVOID WALLS",8,78,1,muted);}
-        else {for(int i=0;i<snake_len;i++)fill_rect(16+snake_x[i]*9,38+snake_y[i]*8,7,6,accent);fill_rect(16+food_x*9,38+food_y*8,7,6,rgb565(255,100,100));std::snprintf(line,sizeof(line),"SCORE %d",game_score);draw_text(line,8,116,1,ink);if(game_over)draw_text("GAME OVER - ENTER",90,116,1,accent);}
+        if(!game_started){
+            draw_text("GAME LIBRARY",8,26,1,accent);
+            fill_round_rect(8,39,224,38,5,rgb565(25,43,62));
+            fill_round_rect(13,44,30,28,4,rgb565(87,231,190));
+            draw_text("S",23,52,2,bg);
+            draw_text("SNAKE",51,45,1,ink);
+            draw_text("ARCADE CLASSIC",51,59,1,muted);
+            draw_text("MORE GAMES CAN BE ADDED",8,89,1,muted);
+            draw_text("ENTER: PLAY SNAKE",8,111,1,accent);
+            draw_text("ESC: HOME",8,124,1,muted);
+        } else {
+            draw_text("SNAKE",8,25,1,accent);
+            if(game_over)draw_text("GAME OVER - ENTER",100,25,1,accent);
+            for(int i=0;i<snake_len;i++)fill_rect(16+snake_x[i]*9,38+snake_y[i]*8,7,6,accent);
+            fill_rect(16+food_x*9,38+food_y*8,7,6,rgb565(255,100,100));
+            std::snprintf(line,sizeof(line),"SCORE %d",game_score);draw_text(line,8,116,1,ink);
+            draw_text("ARROWS MOVE  ESC GAMES",8,128,1,muted);
+        }
         break;
     default:
         draw_text("MCAI-OS FOR CARDPUTER ADV",8,37,1,ink);draw_text("VERSION 0.2.0",8,57,1,accent);draw_text("BUILT-IN APP SUITE",8,77,1,muted);break;
@@ -1295,10 +1330,16 @@ void poll_keyboard() {
             else if(key==KEY_ENTER)open_selected_file();
         } else if(active_app==1){
             if(!note_editing){
-                if(is_up(key)){if(note_selected>0)--note_selected;if(note_selected<note_scroll)note_scroll=note_selected;}
-                else if(is_down(key)){if(note_selected+1<note_count)++note_selected;if(note_selected>=note_scroll+5)note_scroll=note_selected-4;}
+                if(is_up(key)){
+                    if(notes_action==0&&note_selected==0)notes_action=1;
+                    else if(notes_action==0&&note_selected>0){--note_selected;if(note_selected<note_scroll)note_scroll=note_selected;}
+                }
+                else if(is_down(key)){
+                    if(notes_action==1){notes_action=0;note_selected=std::min(note_selected,std::max(0,note_count-1));}
+                    else if(note_selected+1<note_count){++note_selected;if(note_selected>=note_scroll+5)note_scroll=note_selected-4;}
+                }
                 else if(is_left(key)||is_right(key))notes_action=is_left(key)?0:1;
-                else if(key==KEY_ENTER){if(notes_action==1)create_note();else if(note_count>0)open_note(note_selected);else std::snprintf(store_message,sizeof(store_message),"NO NOTES YET - PRESS N");}
+                else if(key==KEY_ENTER){if(notes_action==1)create_note();else if(note_count>0)open_note(note_selected);else notes_action=1;}
                 else if(ch=='n'||ch=='N')create_note();
                 else if(key==KEY_BACKSPACE||key==KEY_ESC)active_app=-1;
             } else {
@@ -1422,13 +1463,13 @@ void poll_keyboard() {
 
         } else if(active_app==8){/* Every key press is counted above. */}
         else if(active_app==11){
-            if(is_back(key)){active_app=-1;game_started=false;}
+            if(is_back(key)){if(game_started)game_started=false;else active_app=-1;}
             else if(!game_started&&key==KEY_ENTER){game_started=true;game_over=false;snake_len=3;snake_x[0]=10;snake_y[0]=4;snake_x[1]=9;snake_y[1]=4;snake_x[2]=8;snake_y[2]=4;snake_dx=1;snake_dy=0;food_x=14;food_y=4;game_score=0;game_tick_us=esp_timer_get_time();}
             else if(is_up(key)&&snake_dy==0){snake_dx=0;snake_dy=-1;}
             else if(is_down(key)&&snake_dy==0){snake_dx=0;snake_dy=1;}
             else if(is_left(key)&&snake_dx==0){snake_dx=-1;snake_dy=0;}
             else if(is_right(key)&&snake_dx==0){snake_dx=1;snake_dy=0;}
-            else if(game_over&&key==KEY_ENTER)game_started=false;
+            else if(game_over&&key==KEY_ENTER){game_started=false;}
         }
         if(key==KEY_ESC&&active_app!=0&&active_app!=1&&active_app!=2&&active_app!=3&&active_app!=5&&active_app!=6&&active_app!=11)active_app=-1;
     }
