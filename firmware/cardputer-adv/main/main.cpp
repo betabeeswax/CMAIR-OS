@@ -257,11 +257,12 @@ void load_settings() {
     if(f){int b=1,t=1,snd=1;int n=std::fscanf(f,"%d %d %d",&b,&t,&snd);if(n>=1){setting_brightness=std::max(0,std::min(2,b));if(n>=2)dark_theme=t!=0;if(n>=3)sound_enabled=snd!=0;}std::fclose(f);}
 }
 void refresh_notes() {
-    note_count=0; note_selected=0;
-    if(!sd_ready) return;
+    note_count=0;
+    if(!sd_ready){std::snprintf(store_message,sizeof(store_message),"NOTES NEED SD CARD");return;}
     mkdir("/sdcard/MCAI-OS",0775);
     mkdir("/sdcard/MCAI-OS/notes",0775);
-    DIR* d=opendir("/sdcard/MCAI-OS/notes"); if(!d) return;
+    DIR* d=opendir("/sdcard/MCAI-OS/notes");
+    if(!d){std::snprintf(store_message,sizeof(store_message),"CANNOT OPEN NOTES FOLDER");return;}
     struct dirent* e;
     while((e=readdir(d))!=nullptr && note_count<16) {
         const size_t n=std::strlen(e->d_name);
@@ -270,28 +271,49 @@ void refresh_notes() {
         ++note_count;
     }
     closedir(d);
+    for(int i=0;i<note_count;i++)for(int j=i+1;j<note_count;j++)if(std::strcmp(note_files[j],note_files[i])<0){
+        char tmp[40];std::memcpy(tmp,note_files[i],sizeof(tmp));std::memcpy(note_files[i],note_files[j],sizeof(tmp));std::memcpy(note_files[j],tmp,sizeof(tmp));
+    }
+    note_selected=std::min(note_selected,std::max(0,note_count-1));
 }
-void save_note() {
-    if(!sd_ready || !note_filename[0]) return;
+bool save_note() {
+    if(!sd_ready || !note_filename[0]){std::snprintf(store_message,sizeof(store_message),"NOTE NOT SAVED - NO SD");return false;}
     FILE* f=std::fopen(note_filename,"w");
-    if(f){std::fwrite(note_buffer,1,note_length,f);std::fclose(f);}
+    if(!f){std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;}
+    const size_t written=std::fwrite(note_buffer,1,(size_t)note_length,f);
+    const bool ok=(written==(size_t)note_length)&&std::fflush(f)==0&&std::fclose(f)==0;
+    if(!ok){std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;}
+    std::snprintf(store_message,sizeof(store_message),"NOTE SAVED");
+    return true;
 }
 void open_note(int index) {
-    if(index<0 || index>=note_count) return;
-    std::snprintf(note_filename,sizeof(note_filename),"/sdcard/MCAI-OS/notes/%.39s",note_files[index]);
-    note_length=0; note_buffer[0]=0;
-    FILE* f=std::fopen(note_filename,"r");
-    if(f){note_length=(int)std::fread(note_buffer,1,sizeof(note_buffer)-1,f);note_buffer[note_length]=0;std::fclose(f);}
-    note_editing=true; note_scroll=0;
+    if(!sd_ready || index<0 || index>=note_count)return;
+    char path[96];
+    std::snprintf(path,sizeof(path),"/sdcard/MCAI-OS/notes/%.39s",note_files[index]);
+    FILE* f=std::fopen(path,"r");
+    if(!f){std::snprintf(store_message,sizeof(store_message),"CANNOT OPEN NOTE");return;}
+    note_length=(int)std::fread(note_buffer,1,sizeof(note_buffer)-1,f);
+    note_buffer[note_length]=0;
+    std::fclose(f);
+    std::snprintf(note_filename,sizeof(note_filename),"%s",path);
+    note_editing=true;note_scroll=0;
+    std::snprintf(store_message,sizeof(store_message),"NOTE OPENED");
 }
 void create_note() {
-    if(!sd_ready){note_filename[0]=0;return;}
-    mkdir("/sdcard/MCAI-OS",0775); mkdir("/sdcard/MCAI-OS/notes",0775);
-    char name[40]; int number=1;
-    do {std::snprintf(name,sizeof(name),"NOTE-%03d.txt",number++);char full[100];std::snprintf(full,sizeof(full),"/sdcard/MCAI-OS/notes/%s",name);struct stat st{};if(stat(full,&st)!=0)break;} while(number<1000);
+    if(!sd_ready){std::snprintf(store_message,sizeof(store_message),"INSERT SD CARD FIRST");return;}
+    mkdir("/sdcard/MCAI-OS",0775);
+    mkdir("/sdcard/MCAI-OS/notes",0775);
+    char name[40]={};int number=1;
+    for(;number<1000;number++){
+        std::snprintf(name,sizeof(name),"NOTE-%03d.txt",number);
+        char path[96];std::snprintf(path,sizeof(path),"/sdcard/MCAI-OS/notes/%s",name);
+        struct stat st{};if(stat(path,&st)!=0)break;
+    }
+    if(number>=1000){std::snprintf(store_message,sizeof(store_message),"NOTE LIMIT REACHED");return;}
     std::snprintf(note_filename,sizeof(note_filename),"/sdcard/MCAI-OS/notes/%s",name);
-    note_buffer[0]=0;note_length=0;note_editing=true;note_scroll=0;save_note();refresh_notes();
-    for(int i=0;i<note_count;i++)if(std::strcmp(note_files[i],name)==0){note_selected=i;break;}
+    note_buffer[0]=0;note_length=0;note_scroll=0;note_editing=true;
+    if(save_note()){refresh_notes();for(int i=0;i<note_count;i++)if(std::strcmp(note_files[i],name)==0){note_selected=i;break;}}
+    else note_editing=false;
 }
 bool eval_expr(const char*& p,double& out);
 bool eval_factor(const char*& p,double& out) {
@@ -703,8 +725,8 @@ void render_app() {
             const char* note_title=std::strrchr(note_filename,'/');
             draw_text(note_title?note_title+1:note_filename,8,25,1,accent);
             for(int i=0;i<6;i++){int pos=(note_scroll+i)*35;if(pos>=note_length)break;char row[36]={};std::strncpy(row,note_buffer+pos,35);draw_text(row,8,40+i*12,1,ink);}
-            draw_text("TYPE TO EDIT  BKSP DELETE",8,113,1,muted);
-            draw_text("ESC SAVE AND BACK",8,124,1,muted);
+            draw_text("TYPE EDIT  UP/DOWN SCROLL",8,113,1,muted);
+            draw_text("ESC SAVE/BACK  BKSP DELETE",8,124,1,muted);
         }
         break;
     case 2:
@@ -1035,6 +1057,8 @@ void poll_keyboard() {
                 else if(key==KEY_BACKSPACE||key==KEY_ESC)active_app=-1;
             } else {
                 if(key==KEY_ESC){save_note();note_editing=false;refresh_notes();}
+                else if(is_up(key)){note_scroll=std::max(0,note_scroll-1);}
+                else if(is_down(key)){note_scroll=std::min(std::max(0,note_length/35-5),note_scroll+1);}
                 else if(key==KEY_BACKSPACE){if(note_length>0){--note_length;note_buffer[note_length]=0;save_note();}}
                 else if(key==KEY_ENTER&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]='\n';note_buffer[note_length]=0;note_scroll=std::max(0,note_length/35-5);save_note();}
                 else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;note_scroll=std::max(0,note_length/35-5);save_note();}
