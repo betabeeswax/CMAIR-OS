@@ -1796,17 +1796,11 @@ extern "C" void app_main(void) {
     channel.hpoint=0;
     ESP_ERROR_CHECK(ledc_channel_config(&channel));
     init_display();
-    init_keyboard();
     draw_mcaI_logo_splash();
-    // Never trap the device on the splash screen if the keyboard controller
-    // fails to initialize or its first key event is missed.
-    keypress_count=0;
-    const std::int64_t boot_wait_until=esp_timer_get_time()+8000000;
-    while(keyboard_ready && keypress_count==0 && esp_timer_get_time()<boot_wait_until) {
-        poll_keyboard();
-        if(gpio_get_level(GPIO_NUM_0)==0) break;
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
+    // Use the earlier stable startup order: do not poll the keypad on the
+    // splash screen. Start the OS automatically, then initialize input.
+    vTaskDelay(pdMS_TO_TICKS(1100));
+    init_keyboard();
     init_audio();init_sd_card();load_settings();load_launcher_layout();refresh_installed_packages();seed_store();apply_brightness();
     const esp_err_t ota_mark=esp_ota_mark_app_valid_cancel_rollback();
     if(ota_mark!=ESP_OK&&ota_mark!=ESP_ERR_NOT_FOUND)ESP_LOGW(kTag,"OTA validation mark: %s",esp_err_to_name(ota_mark));
