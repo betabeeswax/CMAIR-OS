@@ -84,6 +84,8 @@ char wifi_ssid_input[33]={};
 char wifi_password_input[65]={};
 bool bluetooth_screen=false, ble_ready=false, ble_scan_active=false;
 bool wifi_driver_ready=false;
+bool wifi_connected=false;
+char wifi_ip_text[16]="0.0.0.0";
 esp_netif_t* wifi_sta_netif=nullptr;
 char wifi_networks[16][33]={}; int wifi_network_rssi[16]={}; int wifi_network_auth[16]={};
 int wifi_network_count=0, wifi_network_selected=0, wifi_network_scroll=0;
@@ -99,7 +101,7 @@ int file_scroll = 0;
 char note_buffer[512] = {};
 int note_length = 0, note_scroll = 0;
 char note_files[16][40] = {};
-int note_count=0, note_selected=0;
+int note_count=0, note_selected=0, notes_action=1;
 char note_filename[112] = {};
 bool note_editing=false;
 char last_char = '-';
@@ -119,6 +121,7 @@ bool package_running=false; char package_title[64]=""; char package_subtitle[96]
 char clock_input[8] = {};
 int clock_len = 0;
 int timer_seconds = 60;
+char timer_input[12]="00:01:00";
 bool stopwatch_running=false;
 std::int64_t stopwatch_started_us=0, stopwatch_elapsed_us=0;
 bool timer_running = false;
@@ -174,9 +177,29 @@ const std::uint8_t* glyph(char c) {
     if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
     if (c >= 'A' && c <= 'Z') return letters[c - 'A'];
     if (c >= '0' && c <= '9') return digits[c - '0'];
-    static const std::uint8_t dash[5] = {8,8,8,8,8};
-    if (c == '-') return dash;
-    return blank;
+    static const std::uint8_t dash[5]={8,8,8,8,8}, plus[5]={8,8,62,8,8};
+    static const std::uint8_t star[5]={65,34,20,34,65}, slash[5]={32,16,8,4,2};
+    static const std::uint8_t lp[5]={0,28,34,65,0}, rp[5]={0,65,34,28,0};
+    static const std::uint8_t eq[5]={20,20,20,20,20}, dot[5]={0,96,96,0,0};
+    static const std::uint8_t comma[5]={0,64,48,0,0}, colon[5]={0,54,54,0,0};
+    static const std::uint8_t semi[5]={0,86,54,0,0}, under[5]={64,64,64,64,64};
+    static const std::uint8_t bang[5]={0,0,95,0,0}, question[5]={2,1,81,9,6};
+    static const std::uint8_t lb[5]={0,127,65,65,0}, rb[5]={0,65,65,127,0};
+    static const std::uint8_t quote[5]={0,3,0,3,0}, apos[5]={0,3,0,0,0};
+    static const std::uint8_t less[5]={8,20,34,65,0}, greater[5]={0,65,34,20,8};
+    static const std::uint8_t at[5]={62,65,93,85,30}, hash[5]={20,127,20,127,20};
+    static const std::uint8_t percent[5]={35,19,8,100,98}, amp[5]={54,73,85,34,80};
+    static const std::uint8_t caret[5]={4,2,1,2,4}, pipe[5]={0,0,127,0,0};
+    static const std::uint8_t bs[5]={2,4,8,16,32};
+    switch(c){
+        case '-':return dash;case '+':return plus;case '*':return star;case '/':return slash;
+        case '(':return lp;case ')':return rp;case '=':return eq;case '.':return dot;
+        case ',':return comma;case ':':return colon;case ';':return semi;case '_':return under;
+        case '!':return bang;case '?':return question;case '[':return lb;case ']':return rb;
+        case '"':return quote;case 0x27:return apos;case '<':return less;case '>':return greater;
+        case '@':return at;case '#':return hash;case '%':return percent;case '&':return amp;
+        case '^':return caret;case '|':return pipe;case 0x5c:return bs;default:return blank;
+    }
 }
 
 void draw_text(const char* text, int x, int y, int scale, std::uint16_t color) {
@@ -753,15 +776,17 @@ void render_app() {
     case 1:
         if(!note_editing){
             draw_text("MY NOTES",8,25,1,accent);
-            for(int i=0;i<6;i++){int ix=note_scroll+i;if(ix>=note_count)break;draw_text(note_files[ix],12,42+i*12,1,ix==note_selected?accent:ink);}
-            draw_text("ENTER OPEN  N NEW NOTE",8,113,1,muted);
-            draw_text(sd_ready?"SAVED TO SD":"INSERT SD CARD",8,124,1,muted);
+            for(int i=0;i<5;i++){int ix=note_scroll+i;if(ix>=note_count)break;draw_text(note_files[ix],8,40+i*12,1,ix==note_selected?accent:ink);}
+            fill_round_rect(8,105,94,17,3,notes_action==0?accent:muted);
+            fill_round_rect(111,105,121,17,3,notes_action==1?accent:muted);
+            draw_text("OPEN",39,110,1,bg);draw_text("+ NEW NOTE",132,110,1,bg);
+            draw_text(sd_ready?store_message:"INSERT SD CARD",8,125,1,muted);
         } else {
             const char* note_title=std::strrchr(note_filename,'/');
             draw_text(note_title?note_title+1:note_filename,8,25,1,accent);
             render_note_page(8,40,6,ink);
-            draw_text("TYPE EDIT  UP/DOWN SCROLL",8,113,1,muted);
-            draw_text("ESC SAVE/BACK  BKSP DELETE",8,124,1,muted);
+            draw_text("TYPE EDIT  UP/DOWN SCROLL",8,112,1,muted);
+            draw_text("FN+ENTER SAVE & EXIT  BKSP DEL",8,124,1,muted);
         }
         break;
     case 2:
@@ -785,13 +810,14 @@ void render_app() {
                 const bool entering_ssid=(wifi_setup_step==1);
                 draw_text(entering_ssid?"WIFI NETWORK NAME":"WIFI PASSWORD",8,29,1,accent);
                 if(entering_ssid)draw_text(wifi_ssid_input,8,52,1,ink);
-                else {char hidden[65]={};for(int i=0;i<(int)std::strlen(wifi_password_input)&&i<64;i++)hidden[i]='*';draw_text(hidden,8,52,1,ink);}
+                else draw_text(wifi_password_input,8,52,1,ink);
                 draw_text("TYPE USING KEYBOARD",8,78,1,muted);
-                draw_text(entering_ssid?"ENTER: NEXT":"ENTER: CONNECT",8,98,1,muted);
+                draw_text(entering_ssid?"ENTER: NEXT":"PASSWORD SHOWN",8,98,1,muted);
                 draw_text("ESC: CANCEL  BKSP: DELETE",8,116,1,muted);
             }
         } else {
             draw_text("SETTINGS",8,25,1,accent);
+            draw_text(wifi_connected?"WIFI CONNECTED":"WIFI NOT CONNECTED",104,25,1,wifi_connected?accent:muted);
             const char* rows[]={"BRIGHTNESS","THEME","WI-FI SETUP","BLUETOOTH","SOUNDS"};
             for(int i=0;i<5;i++){
                 char item[40];
@@ -832,8 +858,11 @@ void render_app() {
     }
     case 7: {
         int left=timer_seconds;if(timer_running)left=(int)std::max<std::int64_t>(0,(timer_end_us-esp_timer_get_time()+999999)/1000000);
-        std::snprintf(line,sizeof(line),"%02d:%02d",left/60,left%60);draw_text("COUNTDOWN TIMER",8,27,1,accent);draw_text(line,8,49,3,ink);
-        draw_text(timer_running?"RUNNING":"PAUSED",8,91,1,muted);draw_text("UP/DOWN 10 SEC ENTER START",8,110,1,muted);break;}
+        std::snprintf(line,sizeof(line),"%02d:%02d:%02d",left/3600,(left/60)%60,left%60);
+        draw_text("COUNTDOWN TIMER",8,25,1,accent);draw_text(timer_running?line:timer_input,8,49,3,ink);
+        draw_text(timer_running?"RUNNING":"TYPE HH:MM:SS",8,91,1,muted);
+        draw_text(timer_running?"ENTER PAUSE":"ENTER START  C CLEAR",8,110,1,muted);
+        draw_text("BACKSPACE DELETE  R RESET",8,123,1,muted);break;}
     case 8:
         draw_text("KEYBOARD TEST",8,27,1,accent);draw_text("LAST KEY:",8,48,1,muted);draw_text(last_key_label,68,48,1,ink);
         std::snprintf(line,sizeof(line),"KEY EVENTS: %lu",(unsigned long)keypress_count);draw_text(line,8,69,1,ink);
