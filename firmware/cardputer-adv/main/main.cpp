@@ -96,7 +96,7 @@ char note_buffer[512] = {};
 int note_length = 0, note_scroll = 0;
 char note_files[16][40] = {};
 int note_count=0, note_selected=0;
-char note_filename[64] = {};
+char note_filename[112] = {};
 bool note_editing=false;
 char last_char = '-';
 unsigned keypress_count = 0;
@@ -281,7 +281,9 @@ bool save_note() {
     FILE* f=std::fopen(note_filename,"w");
     if(!f){std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;}
     const size_t written=std::fwrite(note_buffer,1,(size_t)note_length,f);
-    const bool ok=(written==(size_t)note_length)&&std::fflush(f)==0&&std::fclose(f)==0;
+    const bool flush_ok=std::fflush(f)==0;
+    const bool close_ok=std::fclose(f)==0;
+    const bool ok=(written==(size_t)note_length)&&flush_ok&&close_ok;
     if(!ok){std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;}
     std::snprintf(store_message,sizeof(store_message),"NOTE SAVED");
     return true;
