@@ -121,6 +121,7 @@ char viewer_buffer[700] = {};
 bool viewing_file = false;
 char store_names[128][64] = {}; char store_status[128][20] = {}; char store_ids[128][64] = {}; char store_urls[128][256] = {}; char store_hashes[128][65] = {}; size_t store_sizes[128] = {};
 int store_count=0, store_selected=0, store_scroll=0;
+bool store_loading=false;
 char store_message[40]="ADD WIFI.CFG ON SD"; bool wifi_started=false, catalogue_loaded=false, ntp_started=false;
 char catalogue_buffer[32768]={}; size_t catalogue_length=0;
 bool package_running=false; char package_title[64]=""; char package_subtitle[96]=""; char package_id[64]=""; int package_counter=0, package_increment=1;
@@ -653,20 +654,25 @@ bool connect_wifi_from_sd() {
     if(!ok||!ssid[0]){std::snprintf(store_message,sizeof(store_message),"INVALID WIFI SETTINGS");return false;}
     return connect_wifi_credentials(ssid,password);
 }
-void refresh_store() {
+bool load_store_catalogue() {
     store_count=0;store_selected=0;store_scroll=0;catalogue_loaded=false;catalogue_length=0;catalogue_buffer[0]=0;
-    if(!connect_wifi_from_sd())return;
+    for(int wait=0;wifi_connecting&&wait<120;wait++)vTaskDelay(pdMS_TO_TICKS(250));
+    if(wifi_connecting){std::snprintf(store_message,sizeof(store_message),"WIFI STILL CONNECTING");return false;}
+    if(!connect_wifi_from_sd())return false;
     esp_http_client_config_t cfg={};
     cfg.url="https://raw.githubusercontent.com/betabeeswax/MCAI-OS-APPS/main/catalogue.json";
-    cfg.event_handler=catalogue_http_event;cfg.timeout_ms=15000;cfg.buffer_size=2048;cfg.crt_bundle_attach=esp_crt_bundle_attach;
+    cfg.event_handler=catalogue_http_event;cfg.timeout_ms=20000;cfg.buffer_size=2048;cfg.crt_bundle_attach=esp_crt_bundle_attach;
     esp_http_client_handle_t client=esp_http_client_init(&cfg);
-    if(!client){std::snprintf(store_message,sizeof(store_message),"HTTP INIT FAILED");return;}
+    if(!client){std::snprintf(store_message,sizeof(store_message),"HTTP INIT FAILED");return false;}
     esp_err_t result=esp_http_client_perform(client);
     int status=esp_http_client_get_status_code(client);esp_http_client_cleanup(client);
-    if(result!=ESP_OK||status!=200){std::snprintf(store_message,sizeof(store_message),"GITHUB FETCH FAILED");return;}
+    if(result!=ESP_OK){std::snprintf(store_message,sizeof(store_message),"NETWORK ERROR - RETRY");return false;}
+    if(status!=200){std::snprintf(store_message,sizeof(store_message),"GITHUB HTTP %d",status);return false;}
+    if(catalogue_length==0){std::snprintf(store_message,sizeof(store_message),"EMPTY CATALOGUE RESPONSE");return false;}
+    if(catalogue_length>=sizeof(catalogue_buffer)-1){std::snprintf(store_message,sizeof(store_message),"CATALOGUE TOO LARGE");return false;}
     cJSON* root=cJSON_Parse(catalogue_buffer);
     cJSON* apps=root?cJSON_GetObjectItemCaseSensitive(root,"apps"):nullptr;
-    if(!cJSON_IsArray(apps)){if(root)cJSON_Delete(root);std::snprintf(store_message,sizeof(store_message),"BAD CATALOGUE JSON");return;}
+    if(!cJSON_IsArray(apps)){if(root)cJSON_Delete(root);std::snprintf(store_message,sizeof(store_message),"INVALID CATALOGUE JSON");return false;}
     cJSON* app=nullptr;
     cJSON_ArrayForEach(app,apps){
         if(store_count>=128)break;
@@ -678,6 +684,7 @@ void refresh_store() {
         std::snprintf(store_names[store_count],64,"%s",name->valuestring);
         std::snprintf(store_ids[store_count],64,"%s",id->valuestring);
         std::snprintf(store_status[store_count],20,"%s",cJSON_IsString(status_item)?status_item->valuestring:"unknown");
+        store_urls[store_count][0]=0;store_hashes[store_count][0]=0;store_sizes[store_count]=0;
         if(cJSON_IsObject(package)){
             cJSON* url=cJSON_GetObjectItemCaseSensitive(package,"url");
             cJSON* hash=cJSON_GetObjectItemCaseSensitive(package,"sha256");
@@ -685,7 +692,8 @@ void refresh_store() {
             cJSON* size=cJSON_GetObjectItemCaseSensitive(package,"sizeBytes");
             if(cJSON_IsString(url)&&cJSON_IsString(hash)&&cJSON_IsString(format)&&
                std::strcmp(format->valuestring,"mcai-app-v1")==0&&cJSON_IsNumber(size)&&
-               size->valuedouble>0&&size->valuedouble<=4096&&std::strncmp(url->valuestring,"https://",8)==0){
+               size->valuedouble>0&&size->valuedouble<=4096&&std::strncmp(url->valuestring,"https://",8)==0&&
+               std::strlen(hash->valuestring)==64){
                 std::snprintf(store_urls[store_count],256,"%s",url->valuestring);
                 std::snprintf(store_hashes[store_count],65,"%s",hash->valuestring);
                 store_sizes[store_count]=(size_t)size->valuedouble;
@@ -694,7 +702,19 @@ void refresh_store() {
         ++store_count;
     }
     cJSON_Delete(root);catalogue_loaded=true;
-    std::snprintf(store_message,sizeof(store_message),"GITHUB: %d APPS",store_count);
+    std::snprintf(store_message,sizeof(store_message),"%d APPS LOADED",store_count);
+    return true;
+}
+void refresh_store_task(void*) {
+    load_store_catalogue();store_loading=false;ui_dirty=true;vTaskDelete(nullptr);
+}
+void refresh_store() {
+    if(store_loading)return;
+    store_loading=true;store_count=0;store_selected=0;store_scroll=0;catalogue_loaded=false;
+    std::snprintf(store_message,sizeof(store_message),"LOADING APP CATALOGUE");ui_dirty=true;
+    if(xTaskCreate(refresh_store_task,"store-refresh",6144,nullptr,4,nullptr)!=pdPASS){
+        store_loading=false;std::snprintf(store_message,sizeof(store_message),"STORE TASK FAILED");ui_dirty=true;
+    }
 }
 bool package_path(char* out,size_t cap,const char* id) {
     if(!id||!id[0]||std::strstr(id,"..")||std::strchr(id,'/'))return false;
@@ -946,8 +966,10 @@ void render_app() {
     case 5:
         draw_text("GITHUB APP STORE",8,25,1,accent);
         draw_text(catalogue_loaded?"MCAI-OS-APPS / MAIN":"GITHUB CATALOGUE",8,39,1,ink);
+        if(store_loading){draw_text("CONNECTING / DOWNLOADING...",8,70,1,accent);}
+        else if(!catalogue_loaded&&store_count==0){draw_text("NO APPS LOADED",8,65,1,accent);draw_text("CHECK WIFI + WIFI.CFG",8,80,1,ink);}
         for(int i=0;i<4;i++){int ix=store_scroll+i;if(ix>=store_count)break;char row[40];std::snprintf(row,sizeof(row),"%c %.20s %s",ix==store_selected?'>':' ',store_names[ix],store_builtin_index(store_ids[ix])>=0?"BUILT-IN":(package_installed(store_ids[ix])?"INSTALLED":(std::strcmp(store_status[ix],"available")==0?"AVAILABLE":(std::strcmp(store_status[ix],"experimental")==0?"EXPERIMENTAL":"PLANNED"))));draw_text(row,8,54+i*13,1,ix==store_selected?accent:ink);}
-        draw_text(store_message,8,110,1,muted);draw_text("UP/DOWN ENTER INFO",8,122,1,muted);break;
+        draw_text(store_message,8,110,1,muted);draw_text("UP/DOWN ENTER R RETRY BKSP BACK",8,122,1,muted);break;
     case 6: {
         std::time_t now=std::time(nullptr);std::tm tmv{};localtime_r(&now,&tmv);
         if(tmv.tm_year<120){draw_text("TIME NOT SYNCED",8,33,2,accent);draw_text("SET WIFI IN SETTINGS",8,67,1,ink);}
@@ -1346,10 +1368,12 @@ void poll_keyboard() {
             } else if(key==KEY_ESC)active_app=-1;
         } else if(active_app==5){
             if(is_back(key))active_app=-1;
+            else if(store_loading){std::snprintf(store_message,sizeof(store_message),"PLEASE WAIT - LOADING");}
             else if(is_up(key)||is_left(key)){if(store_selected>0)--store_selected;if(store_selected<store_scroll)store_scroll=store_selected;}
             else if(is_down(key)||is_right(key)){if(store_selected+1<store_count)++store_selected;if(store_selected>=store_scroll+4)store_scroll=store_selected-3;}
+            else if(ch=='r'||ch=='R'){refresh_store();}
             else if(key==KEY_ENTER){
-                if(store_count<=0){std::snprintf(store_message,sizeof(store_message),"CATALOGUE EMPTY");}
+                if(store_count<=0){std::snprintf(store_message,sizeof(store_message),"NO APPS - PRESS R TO RETRY");}
                 else {
                     const int builtin=store_builtin_index(store_ids[store_selected]);
                     if(builtin>=0){
