@@ -1830,18 +1830,15 @@ extern "C" void app_main(void) {
     // until it has been verified on Cardputer ADV hardware. A failure here
     // happens exactly when leaving the splash screen and can look like a reboot loop.
     audio_ready=false;
-    init_sd_card();load_settings();load_launcher_layout();refresh_installed_packages();seed_store();apply_brightness();
-    if(keyboard_ready) {
-        std::uint8_t pending=0;
-        if(keyboard_read(0x03,&pending)==ESP_OK) {
-            std::uint8_t remaining=pending&0x0F;
-            while(remaining--) {
-                std::uint8_t ignored=0;
-                if(keyboard_read(0x04,&ignored)!=ESP_OK) break;
-            }
-        }
-        keyboard_write(0x02,0x1F);
-    }
+    // SAFE-BOOT: bypass the microSD SPI/FAT mount and every SD-backed loader.
+    // The launcher has built-in defaults; this isolates storage startup from
+    // the reboot loop while keeping the keyboard and built-in apps available.
+    sd_ready=false;
+    sd_card=nullptr;
+    load_launcher_layout(); // initializes the default built-in app order
+    installed_package_count=0;
+    ESP_LOGW(kTag,"SAFE-BOOT: microSD initialization skipped; SD apps/files/notes unavailable");
+    apply_brightness();
     const esp_err_t ota_mark=esp_ota_mark_app_valid_cancel_rollback();
     if(ota_mark!=ESP_OK&&ota_mark!=ESP_ERR_NOT_FOUND)ESP_LOGW(kTag,"OTA validation mark: %s",esp_err_to_name(ota_mark));
     render_home();play_tone(660,90);
