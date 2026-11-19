@@ -109,6 +109,8 @@ bool package_running=false; char package_title[64]=""; char package_subtitle[96]
 char clock_input[8] = {};
 int clock_len = 0;
 int timer_seconds = 60;
+bool stopwatch_running=false;
+std::int64_t stopwatch_started_us=0, stopwatch_elapsed_us=0;
 bool timer_running = false;
 std::int64_t timer_end_us = 0;
 bool game_started = false;
@@ -120,7 +122,7 @@ bool dark_theme = true;
 bool ui_dirty=true;
 bool boot_button_was_pressed = false;
 constexpr int kAppsPerPage = 4;
-constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT"};
+constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT","STOPWATCH"};
 constexpr int kAppCount = sizeof(kApps) / sizeof(kApps[0]);
 alignas(4) std::uint16_t framebuffer[kWidth * kHeight];
 
@@ -543,6 +545,7 @@ int store_builtin_index(const char* id) {
     if(std::strcmp(id,"diagnostics")==0)return 10;
     if(std::strcmp(id,"snake")==0)return 11;
     if(std::strcmp(id,"about")==0)return 12;
+    if(std::strcmp(id,"stopwatch")==0)return 13;
     return -1;
 }
 bool package_installed(const char* id) {
@@ -633,7 +636,7 @@ void render_app() {
     const auto ink=dark_theme?white:rgb565(20,30,45);
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
     draw_text("MCAI",8,7,1,accent);draw_text("OS",39,10,1,muted);
-    if(active_app==13)draw_text(package_title,100,7,1,ink);else draw_text(kApps[active_app],100,7,1,ink);
+    if(active_app==14)draw_text(package_title,100,7,1,ink);else draw_text(kApps[active_app],100,7,1,ink);
     fill_rect(0,19,kWidth,1,rgb565(44,59,78));
     char line[64];
     switch(active_app) {
@@ -703,6 +706,16 @@ void render_app() {
         if(tmv.tm_year<120){draw_text("TIME NOT SYNCED",8,33,2,accent);draw_text("SET WIFI IN SETTINGS",8,67,1,ink);}
         else {std::snprintf(line,sizeof(line),"%02d:%02d:%02d",tmv.tm_hour,tmv.tm_min,tmv.tm_sec);draw_text("SYSTEM CLOCK",8,30,1,accent);draw_text(line,8,55,3,ink);}
         draw_text("ESC: BACK",8,111,1,muted);break;}
+    case 13: {
+        const std::int64_t elapsed=stopwatch_elapsed_us+(stopwatch_running?(esp_timer_get_time()-stopwatch_started_us):0);
+        const int centis=(int)(elapsed/10000);
+        const int seconds=centis/100, minutes=seconds/60;
+        std::snprintf(line,sizeof(line),"%02d-%02d-%02d",minutes,seconds%60,centis%100);
+        draw_text("STOPWATCH",8,29,1,accent);draw_text(line,8,53,3,ink);
+        draw_text(stopwatch_running?"RUNNING":"PAUSED",8,91,1,muted);
+        draw_text("ENTER START / PAUSE",8,110,1,muted);draw_text("R RESET",8,123,1,muted);
+        break;
+    }
     case 7: {
         int left=timer_seconds;if(timer_running)left=(int)std::max<std::int64_t>(0,(timer_end_us-esp_timer_get_time()+999999)/1000000);
         std::snprintf(line,sizeof(line),"%02d:%02d",left/60,left%60);draw_text("COUNTDOWN TIMER",8,27,1,accent);draw_text(line,8,49,3,ink);
@@ -1027,6 +1040,10 @@ void poll_keyboard() {
                 }
             }
         } else if(active_app==13){
+            if(is_back(key)){stopwatch_running=false;stopwatch_elapsed_us=0;active_app=-1;}
+            else if(key==KEY_ENTER){if(stopwatch_running){stopwatch_elapsed_us+=esp_timer_get_time()-stopwatch_started_us;stopwatch_running=false;}else{stopwatch_started_us=esp_timer_get_time();stopwatch_running=true;}}
+            else if(ch=='r'||ch=='R'){stopwatch_elapsed_us=0;if(stopwatch_running)stopwatch_started_us=esp_timer_get_time();}
+        } else if(active_app==14){
             if(is_back(key)){package_running=false;active_app=5;}
             else if(key==KEY_ENTER){package_counter=std::min(999999,package_counter+package_increment);}
         } else if(active_app==6){
@@ -1093,7 +1110,7 @@ extern "C" void app_main(void) {
             for(int i=1;i<snake_len;i++)if(snake_x[0]==snake_x[i]&&snake_y[0]==snake_y[i])game_over=true;
             if(snake_x[0]==food_x&&snake_y[0]==food_y){if(snake_len<47)++snake_len;++game_score;food_x=(food_x+7)%23;food_y=(food_y+3)%9;}
         }
-        if(old_app!=active_app||old_sel!=selected_app||active_app==6||active_app==7||active_app==11||active_app==5||ui_dirty){render_home();ui_dirty=false;}
+        if(old_app!=active_app||old_sel!=selected_app||active_app==6||active_app==7||active_app==11||active_app==13||active_app==5||ui_dirty){render_home();ui_dirty=false;}
         if(active_app==1&&note_editing&&note_length>0&&note_length%24==0)save_note();
         vTaskDelay(pdMS_TO_TICKS(60));
     }
