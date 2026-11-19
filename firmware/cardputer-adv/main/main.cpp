@@ -579,7 +579,7 @@ bool launch_installed_package(const char* id) {
       std::snprintf(package_subtitle,sizeof(package_subtitle),"%s",subtitle->valuestring);
       package_counter=(int)initial->valuedouble;
       package_increment=(int)increment->valuedouble;
-      package_running=true;active_app=13;
+      package_running=true;active_app=14;
     }
     cJSON_Delete(root);return valid;
 }
@@ -730,7 +730,7 @@ void render_app() {
         draw_text(keyboard_ready?"KEYBOARD PASS":"KEYBOARD FAIL",8,30,1,ink);draw_text(sd_ready?"SD MOUNT PASS":"SD MOUNT FAIL",8,48,1,ink);
         std::snprintf(line,sizeof(line),"FREE HEAP %lu",(unsigned long)esp_get_free_heap_size());draw_text(line,8,66,1,ink);
         std::snprintf(line,sizeof(line),"UPTIME %lu SEC",(unsigned long)(esp_timer_get_time()/1000000));draw_text(line,8,84,1,ink);break;
-    case 13: {
+    case 14: {
         char count[32];std::snprintf(count,sizeof(count),"%d",package_counter);
         draw_text(package_subtitle,8,30,1,muted);draw_text(count,8,55,3,accent);
         draw_text("ENTER: +1",8,94,1,ink);draw_text("BACKSPACE: STORE",8,111,1,muted);break;
