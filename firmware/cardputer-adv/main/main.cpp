@@ -1123,6 +1123,12 @@ void play_tone(std::uint32_t frequency,std::uint32_t duration_ms) {
         if(i2s_write(I2S_NUM_0,samples,n*4,&written,pdMS_TO_TICKS(100))!=ESP_OK||written<n*4)break;
     }
 }
+void play_menu_sound() {
+    if(!audio_ready||!sound_enabled)return;
+    // A short, gentle ascending two-note chime for menu movement/selection.
+    play_tone(880,18);
+    play_tone(1175,28);
+}
 void init_sd_card() {
     spi_bus_config_t bus={};
     bus.mosi_io_num=GPIO_NUM_14; bus.miso_io_num=GPIO_NUM_39;
@@ -1162,9 +1168,11 @@ void poll_keyboard() {
     std::uint8_t count=0;if(keyboard_read(0x03,&count)!=ESP_OK)return;count&=0x0F;
     while(count--){
         std::uint8_t event=0;if(keyboard_read(0x04,&event)!=ESP_OK||event==0)break;
-        const bool pressed=(event&0x80)!=0;
+        // TCA8418 event format: 0x01..0x50 = key DOWN,
+        // 0x81..0xD0 = key UP. The high bit therefore means RELEASE.
+        const bool pressed=(event&0x80)==0;
         const int raw=(event&0x7F);
-        if(raw<=0)continue;
+        if(raw<=0||raw>0x50)continue; // Ignore GPIO events, not matrix keys.
         const int raw_index=raw-1, raw_row=raw_index/10, raw_col=raw_index%10;
         // TCA8418 raw FIFO positions are remapped exactly as M5Stack's ADV driver.
         const int row=(raw_col+4)%4, col=raw_row*2+(raw_col>3?1:0);
@@ -1175,7 +1183,6 @@ void poll_keyboard() {
             if(row==2&&col==1)shift_held=false;
             continue;
         }
-        if(audio_ready&&sound_enabled)play_tone(1250,10);
         if(row==2&&col==0){fn_lock=true;std::snprintf(last_key_label,sizeof(last_key_label),"FN");++keypress_count;continue;}
         if(row==2&&col==1){
             if(fn_lock)caps_lock=!caps_lock;
@@ -1220,9 +1227,9 @@ void poll_keyboard() {
         last_char=ch?ch:(key==KEY_UP?'^':key==KEY_DOWN?'v':key==KEY_LEFT?'<':key==KEY_RIGHT?'>':'?');
         ++keypress_count;
         if(active_app<0){
-            if(is_up(key)||is_left(key))selected_app=(selected_app+kAppCount-1)%kAppCount;
-            else if(is_down(key)||is_right(key))selected_app=(selected_app+1)%kAppCount;
-            else if(key==KEY_ENTER){active_app=selected_app;if(active_app==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}if(active_app==1){note_editing=false;refresh_notes();}if(active_app==5){refresh_store();}if(active_app==6){if(connect_wifi_from_sd())start_time_sync();}}
+            if(is_up(key)||is_left(key)){selected_app=(selected_app+kAppCount-1)%kAppCount;play_menu_sound();}
+            else if(is_down(key)||is_right(key)){selected_app=(selected_app+1)%kAppCount;play_menu_sound();}
+            else if(key==KEY_ENTER){play_menu_sound();active_app=selected_app;if(active_app==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}if(active_app==1){note_editing=false;refresh_notes();}if(active_app==5){refresh_store();}if(active_app==6){if(connect_wifi_from_sd())start_time_sync();}}
             continue;
         }
         if(active_app==0){
