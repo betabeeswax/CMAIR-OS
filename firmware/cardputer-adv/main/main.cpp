@@ -457,22 +457,8 @@ void start_time_sync() {
         ESP_LOGI(kTag,"NTP time sync started");
     }
 }
-bool connect_wifi_from_sd() {
-    if(wifi_started) {
-        wifi_ap_record_t current{};
-        if(esp_wifi_sta_get_ap_info(&current)==ESP_OK)return true;
-        esp_wifi_connect();
-        for(int i=0;i<80;i++){if(esp_wifi_sta_get_ap_info(&current)==ESP_OK)return true;vTaskDelay(pdMS_TO_TICKS(250));}
-        std::snprintf(store_message,sizeof(store_message),"WIFI RECONNECT FAILED");return false;
-    }
-    mkdir("/sdcard/MCAI-OS",0775);
-    FILE* f=std::fopen("/sdcard/MCAI-OS/wifi.cfg","r");
-    if(!f){std::snprintf(store_message,sizeof(store_message),"ADD WIFI.CFG ON SD");return false;}
-    char ssid[33]={},password[65]={};
-    bool ok=std::fgets(ssid,sizeof(ssid),f)&&std::fgets(password,sizeof(password),f); std::fclose(f);
-    auto trim=[](char* s){size_t n=std::strlen(s);while(n&&(s[n-1]=='\n'||s[n-1]=='\r'))s[--n]=0;};
-    trim(ssid);trim(password);
-    if(!ok||!ssid[0]){std::snprintf(store_message,sizeof(store_message),"INVALID WIFI.CFG");return false;}
+bool init_wifi_driver() {
+    if(wifi_driver_ready) return true;
     esp_err_t e=nvs_flash_init();
     if(e==ESP_ERR_NVS_NO_FREE_PAGES||e==ESP_ERR_NVS_NEW_VERSION_FOUND){nvs_flash_erase();e=nvs_flash_init();}
     if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
@@ -481,18 +467,68 @@ bool connect_wifi_from_sd() {
     esp_netif_create_default_wifi_sta();
     wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();
     e=esp_wifi_init(&init);if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
-    wifi_config_t cfg={};
-    if(std::strlen(ssid)>sizeof(cfg.sta.ssid)-1||std::strlen(password)>sizeof(cfg.sta.password)-1){
-        std::snprintf(store_message,sizeof(store_message),"WIFI CREDENTIAL TOO LONG");return false;
+    e=esp_wifi_set_mode(WIFI_MODE_STA);if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
+    e=esp_wifi_start();if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
+    wifi_driver_ready=true;
+    return true;
+}
+bool scan_wifi_networks() {
+    wifi_network_count=0;wifi_network_selected=0;
+    if(!init_wifi_driver()){std::snprintf(store_message,sizeof(store_message),"WIFI INIT FAILED");return false;}
+    wifi_scan_config_t scan={};
+    scan.scan_type=WIFI_SCAN_TYPE_ACTIVE;
+    scan.scan_time.active.min=100;
+    scan.scan_time.active.max=300;
+    const esp_err_t e=esp_wifi_scan_start(&scan,true);
+    if(e!=ESP_OK){std::snprintf(store_message,sizeof(store_message),"WIFI SCAN FAILED");ESP_LOGE(kTag,"Wi-Fi scan: %s",esp_err_to_name(e));return false;}
+    uint16_t count=16;
+    wifi_ap_record_t records[16]={};
+    if(esp_wifi_scan_get_ap_records(&count,records)!=ESP_OK){std::snprintf(store_message,sizeof(store_message),"WIFI RESULTS FAILED");return false;}
+    for(int i=0;i<(int)count&&i<16;i++){
+        std::snprintf(wifi_networks[i],sizeof(wifi_networks[i]),"%.32s",reinterpret_cast<const char*>(records[i].ssid));
+        wifi_network_rssi[i]=records[i].rssi;
+        wifi_network_auth[i]=(int)records[i].authmode;
+        ++wifi_network_count;
     }
+    for(int i=0;i<wifi_network_count;i++)for(int j=i+1;j<wifi_network_count;j++)if(wifi_network_rssi[j]>wifi_network_rssi[i]){
+        char name[33];std::memcpy(name,wifi_networks[i],sizeof(name));std::memcpy(wifi_networks[i],wifi_networks[j],sizeof(name));std::memcpy(wifi_networks[j],name,sizeof(name));
+        int r=wifi_network_rssi[i];wifi_network_rssi[i]=wifi_network_rssi[j];wifi_network_rssi[j]=r;
+        int auth=wifi_network_auth[i];wifi_network_auth[i]=wifi_network_auth[j];wifi_network_auth[j]=auth;
+    }
+    std::snprintf(store_message,sizeof(store_message),wifi_network_count?"FOUND %d NETWORKS":"NO WIFI NETWORKS FOUND",wifi_network_count);
+    return wifi_network_count>0;
+}
+bool connect_wifi_credentials(const char* ssid,const char* password) {
+    if(!ssid||!ssid[0]||std::strlen(ssid)>32||!password||std::strlen(password)>64||!init_wifi_driver())return false;
+    wifi_config_t cfg={};
     std::memcpy(cfg.sta.ssid,ssid,std::strlen(ssid));
     std::memcpy(cfg.sta.password,password,std::strlen(password));
     cfg.sta.threshold.authmode=WIFI_AUTH_OPEN;
-    if(esp_wifi_set_mode(WIFI_MODE_STA)!=ESP_OK||esp_wifi_set_config(WIFI_IF_STA,&cfg)!=ESP_OK||
-       esp_wifi_start()!=ESP_OK||esp_wifi_connect()!=ESP_OK){std::snprintf(store_message,sizeof(store_message),"WIFI START FAILED");return false;}
+    esp_wifi_disconnect();
+    if(esp_wifi_set_config(WIFI_IF_STA,&cfg)!=ESP_OK||esp_wifi_connect()!=ESP_OK){
+        std::snprintf(store_message,sizeof(store_message),"WIFI CONNECT FAILED");return false;
+    }
     wifi_started=true;
-    for(int i=0;i<80;i++){wifi_ap_record_t ap{};if(esp_wifi_sta_get_ap_info(&ap)==ESP_OK)return true;vTaskDelay(pdMS_TO_TICKS(250));}
-    std::snprintf(store_message,sizeof(store_message),"WIFI CONNECT TIMEOUT");return false;
+    for(int i=0;i<40;i++){
+        wifi_ap_record_t ap{};
+        if(esp_wifi_sta_get_ap_info(&ap)==ESP_OK){std::snprintf(store_message,sizeof(store_message),"WIFI CONNECTED");return true;}
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+    std::snprintf(store_message,sizeof(store_message),"WIFI TIMEOUT - CHECK PASSWORD");return false;
+}
+bool connect_wifi_from_sd() {
+    if(wifi_started){
+        wifi_ap_record_t current{};
+        if(esp_wifi_sta_get_ap_info(&current)==ESP_OK)return true;
+    }
+    FILE* f=std::fopen("/sdcard/MCAI-OS/wifi.cfg","r");
+    if(!f){std::snprintf(store_message,sizeof(store_message),"CHOOSE WIFI IN SETTINGS");return false;}
+    char ssid[33]={},password[65]={};
+    bool ok=std::fgets(ssid,sizeof(ssid),f)&&std::fgets(password,sizeof(password),f);std::fclose(f);
+    auto trim=[](char* s){size_t n=std::strlen(s);while(n&&(s[n-1]=='\n'||s[n-1]=='\r'))s[--n]=0;};
+    trim(ssid);trim(password);
+    if(!ok||!ssid[0]){std::snprintf(store_message,sizeof(store_message),"INVALID WIFI SETTINGS");return false;}
+    return connect_wifi_credentials(ssid,password);
 }
 void refresh_store() {
     store_count=0;store_selected=0;store_scroll=0;catalogue_loaded=false;catalogue_length=0;catalogue_buffer[0]=0;
