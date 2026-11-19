@@ -1293,14 +1293,16 @@ void poll_keyboard() {
                     std::snprintf(timer_input,sizeof(timer_input),"%02d:%02d:%02d",timer_seconds/3600,(timer_seconds/60)%60,timer_seconds%60);
                 } else {
                     int h=0,m=0,sec=0,fields=0;
-                    if(std::strchr(timer_input,':'))fields=std::sscanf(timer_input,"%d:%d:%d",&h,&m,&sec);
+                    const bool has_colon=std::strchr(timer_input,':')!=nullptr;
+                    if(has_colon)fields=std::sscanf(timer_input,"%d:%d:%d",&h,&m,&sec);
                     else fields=std::sscanf(timer_input,"%d",&sec);
-                    if(fields==2){sec=m;m=h;h=0;}
-                    if(fields>0&&h>=0&&h<=99&&m>=0&&m<60&&sec>=0&&sec<60){
-                        timer_seconds=h*3600+m*60+sec;
+                    if(has_colon&&fields==2){sec=m;m=h;h=0;}
+                    const bool valid=has_colon?(fields>=2&&h>=0&&h<=99&&m>=0&&m<60&&sec>=0&&sec<60):(fields==1&&sec>=0&&sec<=359999);
+                    if(valid){
+                        timer_seconds=has_colon?h*3600+m*60+sec:sec;
                         if(timer_seconds>0){timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;timer_running=true;}
                         else std::snprintf(store_message,sizeof(store_message),"ENTER A TIME FIRST");
-                    } else std::snprintf(store_message,sizeof(store_message),"USE HH:MM:SS");
+                    } else std::snprintf(store_message,sizeof(store_message),"USE HH:MM:SS OR SECONDS");
                 }
             } else if(!timer_running&&key==KEY_BACKSPACE){size_t n=std::strlen(timer_input);if(n)timer_input[n-1]=0;}
             else if(!timer_running&&(ch=='c'||ch=='C'))timer_input[0]=0;
@@ -1356,7 +1358,7 @@ extern "C" void app_main(void) {
         }
         boot_button_was_pressed=boot_pressed;
         const std::int64_t now=esp_timer_get_time();
-        if(timer_running&&now>=timer_end_us){timer_running=false;timer_seconds=0;ui_dirty=true;play_tone(880,180);play_tone(1175,180);play_tone(1568,260);}
+        if(timer_running&&now>=timer_end_us){timer_running=false;timer_seconds=0;std::snprintf(timer_input,sizeof(timer_input),"00:00:00");ui_dirty=true;play_tone(880,180);play_tone(1175,180);play_tone(1568,260);}
         if(active_app==11&&game_started&&!game_over&&now-game_tick_us>220000){
             game_tick_us=now;
             for(int i=snake_len-1;i>0;i--){snake_x[i]=snake_x[i-1];snake_y[i]=snake_y[i-1];}
