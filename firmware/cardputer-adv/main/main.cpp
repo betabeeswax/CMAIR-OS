@@ -1823,7 +1823,11 @@ extern "C" void app_main(void) {
         if(gpio_get_level(GPIO_NUM_0)==0) break;
         vTaskDelay(pdMS_TO_TICKS(20));
     }
-    init_audio();init_sd_card();load_settings();load_launcher_layout();refresh_installed_packages();seed_store();apply_brightness();
+    // Keep boot recovery-safe: audio/I2S initialization is temporarily disabled
+    // until it has been verified on Cardputer ADV hardware. A failure here
+    // happens exactly when leaving the splash screen and can look like a reboot loop.
+    audio_ready=false;
+    init_sd_card();load_settings();load_launcher_layout();refresh_installed_packages();seed_store();apply_brightness();
     const esp_err_t ota_mark=esp_ota_mark_app_valid_cancel_rollback();
     if(ota_mark!=ESP_OK&&ota_mark!=ESP_ERR_NOT_FOUND)ESP_LOGW(kTag,"OTA validation mark: %s",esp_err_to_name(ota_mark));
     render_home();play_tone(660,90);
