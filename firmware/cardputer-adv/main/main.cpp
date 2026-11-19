@@ -825,8 +825,18 @@ void render_app() {
     char line[64];
     switch(active_app) {
     case 0:
-        if(viewing_file){draw_text("FILE VIEWER",8,27,1,accent);const int viewer_lines=wrapped_line_count(viewer_buffer,36);render_text_page(viewer_buffer,file_scroll,5,8,43,ink);char page[32];std::snprintf(page,sizeof(page),"LINE %d/%d",std::min(file_scroll+1,std::max(1,viewer_lines)),std::max(1,viewer_lines));draw_text(page,8,112,1,muted);draw_text("UP/DOWN SCROLL BKSP CLOSE",8,124,1,muted);}
-        else {draw_text(current_dir,8,25,1,accent);for(int i=0;i<5;i++){int ix=file_scroll+i;if(ix>=file_count)break;std::snprintf(line,sizeof(line),"%c %.20s",file_is_dir[ix]?'>':' ',file_names[ix]);draw_text(line,8,42+i*14,1,ix==file_selected?accent:ink);}draw_text("UP/DOWN SELECT ENTER OPEN",8,112,1,muted);}
+        if(viewing_file){
+            draw_text("FILE VIEWER",8,27,1,accent);
+            const int viewer_lines=wrapped_line_count(viewer_buffer,36);
+            render_text_page(viewer_buffer,file_scroll,5,8,43,ink);
+            char page[32];std::snprintf(page,sizeof(page),"LINE %d/%d",std::min(file_scroll+1,std::max(1,viewer_lines)),std::max(1,viewer_lines));
+            draw_text(page,8,112,1,muted);draw_text("UP/DN SCROLL  BKSP BACK",8,124,1,muted);
+        } else {
+            const char* tail=std::strlen(current_dir)>36?current_dir+std::strlen(current_dir)-36:current_dir;
+            draw_text(tail,8,25,1,accent);
+            for(int i=0;i<5;i++){int ix=file_scroll+i;if(ix>=file_count)break;std::snprintf(line,sizeof(line),"%c %.32s",file_is_dir[ix]?'>':' ',file_names[ix]);draw_text(line,8,42+i*14,1,ix==file_selected?accent:ink);}
+            draw_text("UP/DN MOVE  ENTER OPEN",8,112,1,muted);draw_text("BKSP BACK",8,124,1,muted);
+        }
         break;
     case 1:
         if(!note_editing){
