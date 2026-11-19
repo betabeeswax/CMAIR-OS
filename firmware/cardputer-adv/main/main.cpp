@@ -128,7 +128,8 @@ bool ota_running=false;
 char ota_message[48]="PRESS ENTER TO CHECK FOR UPDATES";
 char store_message[40]="ADD WIFI.CFG ON SD"; bool wifi_started=false, catalogue_loaded=false, ntp_started=false;
 char catalogue_buffer[32768]={}; size_t catalogue_length=0;
-bool package_running=false; int package_return_app=5; char package_title[64]=""; char package_subtitle[96]=""; char package_id[64]=""; int package_counter=0, package_increment=1;
+bool package_running=false; int package_return_app=5; char package_title[64]=""; char package_subtitle[96]=""; char package_id[64]=""; int package_counter=0, package_increment=1; int package_game=0; char package_result[32]="";
+bool speedtest_running=false; char speedtest_status[48]="PRESS ENTER TO TEST"; double speedtest_down_mbps=0.0,speedtest_up_mbps=0.0; volatile std::size_t speedtest_received=0;
 char clock_input[8] = {};
 int clock_len = 0;
 int timer_seconds = 60;
@@ -146,7 +147,7 @@ bool dark_theme = true;
 bool ui_dirty=true;
 bool boot_button_was_pressed = false;
 constexpr int kAppsPerPage = 4;
-constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT","STOPWATCH","OS UPDATER"};
+constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT","STOPWATCH","OS UPDATER","SPEED TEST"};
 constexpr int kAppCount = sizeof(kApps) / sizeof(kApps[0]);
 int launcher_order[kAppCount]={};
 bool launcher_foldered[kAppCount]={};
@@ -706,6 +707,71 @@ void ota_update_task(void*) {
     ESP_LOGE(kTag,"OTA update failed: %s",esp_err_to_name(err));
     vTaskDelete(nullptr);
 }
+esp_err_t speedtest_http_event(esp_http_client_event_t* evt) {
+    if(evt&&evt->event_id==HTTP_EVENT_ON_DATA&&evt->data_len>0)speedtest_received+=(std::size_t)evt->data_len;
+    return ESP_OK;
+}
+void speedtest_task(void*) {
+    speedtest_down_mbps=0.0;speedtest_up_mbps=0.0;
+    std::snprintf(speedtest_status,sizeof(speedtest_status),"CHECKING WI-FI...");
+    ui_dirty=true;
+    if(!wifi_connected&&!connect_wifi_from_sd()){
+        std::snprintf(speedtest_status,sizeof(speedtest_status),"WI-FI FAILED - CHECK SETTINGS");
+        speedtest_running=false;ui_dirty=true;vTaskDelete(nullptr);return;
+    }
+    esp_http_client_config_t cfg={};
+    cfg.url="https://speed.cloudflare.com/__down?bytes=524288";
+    cfg.event_handler=speedtest_http_event;
+    cfg.timeout_ms=30000;
+    cfg.buffer_size=2048;
+    cfg.crt_bundle_attach=esp_crt_bundle_attach;
+    esp_http_client_handle_t client=esp_http_client_init(&cfg);
+    if(!client){std::snprintf(speedtest_status,sizeof(speedtest_status),"HTTP INIT FAILED");speedtest_running=false;ui_dirty=true;vTaskDelete(nullptr);return;}
+    speedtest_received=0;
+    std::snprintf(speedtest_status,sizeof(speedtest_status),"TESTING DOWNLOAD...");
+    ui_dirty=true;
+    const std::int64_t down_start=esp_timer_get_time();
+    esp_err_t result=esp_http_client_perform(client);
+    const std::int64_t down_elapsed=esp_timer_get_time()-down_start;
+    const std::size_t down_bytes=speedtest_received;
+    const int down_status=esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    if(result!=ESP_OK||down_status!=200||down_elapsed<=0||down_bytes==0){
+        std::snprintf(speedtest_status,sizeof(speedtest_status),"DOWNLOAD TEST FAILED");
+        speedtest_running=false;ui_dirty=true;vTaskDelete(nullptr);return;
+    }
+    speedtest_down_mbps=((double)down_bytes*8.0)/(double)down_elapsed;
+    std::snprintf(speedtest_status,sizeof(speedtest_status),"TESTING UPLOAD...");
+    ui_dirty=true;
+    const std::size_t upload_bytes=32768;
+    char* upload=(char*)std::calloc(upload_bytes,1);
+    if(!upload){std::snprintf(speedtest_status,sizeof(speedtest_status),"LOW MEMORY - UPLOAD SKIPPED");speedtest_running=false;ui_dirty=true;vTaskDelete(nullptr);return;}
+    cfg.url="https://speed.cloudflare.com/__up";
+    client=esp_http_client_init(&cfg);
+    if(!client){std::free(upload);std::snprintf(speedtest_status,sizeof(speedtest_status),"UPLOAD INIT FAILED");speedtest_running=false;ui_dirty=true;vTaskDelete(nullptr);return;}
+    esp_http_client_set_method(client,HTTP_METHOD_POST);
+    esp_http_client_set_header(client,"Content-Type","application/octet-stream");
+    esp_http_client_set_post_field(client,upload,(int)upload_bytes);
+    const std::int64_t up_start=esp_timer_get_time();
+    result=esp_http_client_perform(client);
+    const std::int64_t up_elapsed=esp_timer_get_time()-up_start;
+    const int up_status=esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);std::free(upload);
+    if(result==ESP_OK&&(up_status==200||up_status==204)&&up_elapsed>0)
+        speedtest_up_mbps=((double)upload_bytes*8.0)/(double)up_elapsed;
+    if(speedtest_up_mbps>0.0)std::snprintf(speedtest_status,sizeof(speedtest_status),"TEST COMPLETE");
+    else std::snprintf(speedtest_status,sizeof(speedtest_status),"UPLOAD TEST FAILED");
+    speedtest_running=false;ui_dirty=true;vTaskDelete(nullptr);
+}
+void start_speedtest() {
+    if(speedtest_running)return;
+    speedtest_running=true;
+    std::snprintf(speedtest_status,sizeof(speedtest_status),"STARTING...");
+    ui_dirty=true;
+    if(xTaskCreate(speedtest_task,"mcai-speedtest",8192,nullptr,4,nullptr)!=pdPASS){
+        speedtest_running=false;std::snprintf(speedtest_status,sizeof(speedtest_status),"TASK START FAILED");ui_dirty=true;
+    }
+}
 void start_ota_update() {
     if(ota_running)return;
     ota_running=true;
@@ -832,7 +898,7 @@ bool launch_installed_package(const char* id) {
       std::snprintf(package_subtitle,sizeof(package_subtitle),"%s",subtitle->valuestring);
       package_counter=(int)initial->valuedouble;
       package_increment=(int)increment->valuedouble;
-      package_running=true;active_app=15;
+      package_running=true;package_game=0;std::snprintf(package_result,sizeof(package_result),"");active_app=16;
     }
     cJSON_Delete(root);return valid;
 }
@@ -1034,7 +1100,7 @@ void render_app() {
     if(caps_lock)draw_text("CAP",164,7,1,accent);
     if(shift_held)draw_text("SHF",184,7,1,accent);
     if(fn_lock)draw_text("FN",214,7,1,accent);
-    if(active_app==15)draw_text(package_title,100,7,1,ink);else draw_text(kApps[active_app],100,7,1,ink);
+    if(active_app==16)draw_text(package_title,100,7,1,ink);else draw_text(kApps[active_app],100,7,1,ink);
     fill_rect(0,19,kWidth,1,rgb565(44,59,78));
     char line[64];
     switch(active_app) {
@@ -1175,10 +1241,35 @@ void render_app() {
         draw_text(ota_running?"PLEASE KEEP DEVICE POWERED":"ENTER: CHECK / INSTALL",8,111,1,accent);
         draw_text("ESC: BACK",8,124,1,muted);
         break;
-    case 15: {
-        char count[32];std::snprintf(count,sizeof(count),"%d",package_counter);
-        draw_text(package_subtitle,8,30,1,muted);draw_text(count,8,55,3,accent);
-        draw_text("ENTER: +1",8,94,1,ink);draw_text("BACKSPACE: STORE",8,111,1,muted);break;
+    case 15:
+        draw_text("INTERNET SPEED TEST",8,27,1,accent);
+        fill_round_rect(8,39,224,55,5,rgb565(25,43,62));
+        draw_text(speedtest_status,15,47,1,ink);
+        std::snprintf(line,sizeof(line),"DOWN %.2f Mbps",speedtest_down_mbps);draw_text(line,15,62,1,accent);
+        std::snprintf(line,sizeof(line),"UP   %.2f Mbps",speedtest_up_mbps);draw_text(line,15,77,1,accent);
+        draw_text(speedtest_running?"TEST RUNNING...":"ENTER: START  R: RETEST",8,108,1,muted);
+        draw_text("ESC: BACK",8,124,1,muted);
+        break;
+    case 16: {
+        if(package_game==1){
+            draw_text("DICE ROLLER",8,29,1,accent);
+            draw_text(package_result[0]?package_result:"PRESS ENTER TO ROLL",8,55,2,ink);
+            draw_text("ENTER: ROLL AGAIN",8,96,1,muted);
+        } else if(package_game==2){
+            draw_text("COIN FLIP",8,29,1,accent);
+            draw_text(package_result[0]?package_result:"HEADS OR TAILS?",8,55,2,ink);
+            draw_text("ENTER: FLIP AGAIN",8,96,1,muted);
+        } else if(package_game==3){
+            draw_text("LUCKY SEVEN",8,29,1,accent);
+            draw_text(package_result[0]?package_result:"PRESS ENTER TO PICK",8,55,2,ink);
+            std::snprintf(line,sizeof(line),"LUCKY HITS: %d",package_counter);draw_text(line,8,84,1,accent);
+            draw_text("ENTER: PICK NUMBER",8,104,1,muted);
+        } else {
+            char count[32];std::snprintf(count,sizeof(count),"%d",package_counter);
+            draw_text(package_subtitle,8,30,1,muted);draw_text(count,8,55,3,accent);
+            draw_text("ENTER: +1",8,94,1,ink);
+        }
+        draw_text("BACKSPACE: BACK",8,124,1,muted);break;
     }
     case 11:
         if(!game_started){
@@ -1640,8 +1731,16 @@ void poll_keyboard() {
             else if(key==KEY_ENTER&&!ota_running)start_ota_update();
             else if((ch=='r'||ch=='R')&&!ota_running)start_ota_update();
         } else if(active_app==15){
+            if(is_back(key)){if(!speedtest_running)active_app=-1;}
+            else if((key==KEY_ENTER||ch=='r'||ch=='R')&&!speedtest_running)start_speedtest();
+        } else if(active_app==16){
             if(is_back(key)){package_running=false;active_app=package_return_app;}
-            else if(key==KEY_ENTER){package_counter=std::min(999999,package_counter+package_increment);}
+            else if(key==KEY_ENTER){
+                if(package_game==1){int roll=(int)(esp_random()%6)+1;std::snprintf(package_result,sizeof(package_result),"ROLLED: %d",roll);package_counter++;}
+                else if(package_game==2){std::snprintf(package_result,sizeof(package_result),"%s",(esp_random()&1)?"HEADS":"TAILS");package_counter++;}
+                else if(package_game==3){int n=(int)(esp_random()%10);std::snprintf(package_result,sizeof(package_result),"YOU GOT: %d",n);if(n==7)package_counter++;}
+                else package_counter=std::min(999999,package_counter+package_increment);
+            }
         } else if(active_app==6){
             if(key==KEY_ESC||key==KEY_BACKSPACE)active_app=-1;
         } else if(active_app==7){
