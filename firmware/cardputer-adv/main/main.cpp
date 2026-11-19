@@ -717,13 +717,21 @@ void render_app() {
             if(ble_device_count==0)draw_text(ble_scan_active?"LOOKING FOR DEVICES":"NO DEVICES FOUND",8,58,1,ink);
             draw_text(store_message,8,111,1,muted);
             draw_text("ENTER RESCAN  ESC BACK",8,124,1,muted);
-        } else if(wifi_setup_step==1||wifi_setup_step==2){
-            draw_text(wifi_setup_step==1?"WIFI NETWORK NAME":"WIFI PASSWORD",8,29,1,accent);
-            if(wifi_setup_step==1)draw_text(wifi_ssid_input,8,52,1,ink);
-            else {char hidden[65]={};for(int i=0;i<(int)std::strlen(wifi_password_input)&&i<64;i++)hidden[i]='*';draw_text(hidden,8,52,1,ink);}
-            draw_text("TYPE USING KEYBOARD",8,78,1,muted);
-            draw_text(wifi_setup_step==1?"ENTER: NEXT":"ENTER: SAVE AND CONNECT",8,98,1,muted);
-            draw_text("ESC: CANCEL  BKSP: DELETE",8,116,1,muted);
+        } else if(wifi_setup_step==1||wifi_setup_step==2||wifi_setup_step==3||wifi_setup_step==4){
+            if(wifi_setup_step==3){
+                draw_text("CHOOSE WIFI NETWORK",8,28,1,accent);
+                for(int i=0;i<5;i++){int ix=wifi_network_selected+i;if(ix>=wifi_network_count)break;char row[40];std::snprintf(row,sizeof(row),"%c %.20s %ddB",ix==wifi_network_selected?'>':' ',wifi_networks[ix],wifi_network_rssi[ix]);draw_text(row,8,43+i*12,1,ix==wifi_network_selected?accent:ink);}
+                if(wifi_network_count==0)draw_text("NO NETWORKS - PRESS M",8,60,1,ink);
+                draw_text("UP/DOWN SELECT ENTER",8,111,1,muted);draw_text("M MANUAL  ESC BACK",8,124,1,muted);
+            } else {
+                const bool entering_ssid=(wifi_setup_step==1);
+                draw_text(entering_ssid?"WIFI NETWORK NAME":"WIFI PASSWORD",8,29,1,accent);
+                if(entering_ssid)draw_text(wifi_ssid_input,8,52,1,ink);
+                else {char hidden[65]={};for(int i=0;i<(int)std::strlen(wifi_password_input)&&i<64;i++)hidden[i]='*';draw_text(hidden,8,52,1,ink);}
+                draw_text("TYPE USING KEYBOARD",8,78,1,muted);
+                draw_text(entering_ssid?"ENTER: NEXT":"ENTER: CONNECT",8,98,1,muted);
+                draw_text("ESC: CANCEL  BKSP: DELETE",8,116,1,muted);
+            }
         } else {
             draw_text("SETTINGS",8,25,1,accent);
             const char* rows[]={"BRIGHTNESS","THEME","WI-FI SETUP","BLUETOOTH","SOUNDS"};
@@ -1042,21 +1050,32 @@ void poll_keyboard() {
                 else if(is_down(key)){ble_device_scroll=std::min(std::max(0,ble_device_count-5),ble_device_scroll+1);}
             } else if(wifi_setup_step>0){
                 if(key==KEY_ESC){wifi_setup_step=0;}
-                else if(key==KEY_BACKSPACE){
-                    if(wifi_setup_step==1&&std::strlen(wifi_ssid_input)>0)wifi_ssid_input[std::strlen(wifi_ssid_input)-1]=0;
-                    else if(wifi_setup_step==2&&std::strlen(wifi_password_input)>0)wifi_password_input[std::strlen(wifi_password_input)-1]=0;
+                else if(wifi_setup_step==3){
+                    if(is_up(key))wifi_network_selected=std::max(0,wifi_network_selected-1);
+                    else if(is_down(key))wifi_network_selected=std::min(std::max(0,wifi_network_count-1),wifi_network_selected+1);
+                    else if(ch=='m'||ch=='M'){wifi_ssid_input[0]=0;wifi_password_input[0]=0;wifi_setup_step=1;}
+                    else if(key==KEY_ENTER&&wifi_network_count>0){
+                        std::snprintf(wifi_ssid_input,sizeof(wifi_ssid_input),"%s",wifi_networks[wifi_network_selected]);
+                        wifi_password_input[0]=0;
+                        if(wifi_network_auth[wifi_network_selected]==WIFI_AUTH_OPEN){
+                            save_wifi_settings();
+                            if(connect_wifi_credentials(wifi_ssid_input,""))start_time_sync();
+                            wifi_setup_step=0;
+                        } else wifi_setup_step=4;
+                    }
+                } else if(key==KEY_BACKSPACE){
+                    char* field=(wifi_setup_step==1)?wifi_ssid_input:wifi_password_input;
+                    size_t n=std::strlen(field);if(n)field[n-1]=0;
                 } else if(key==KEY_ENTER){
                     if(wifi_setup_step==1){wifi_setup_step=2;}
                     else {
-                        if(save_wifi_settings()){
-                            wifi_setup_step=0;
-                            if(connect_wifi_from_sd())start_time_sync();
-                            std::snprintf(store_message,sizeof(store_message),"WIFI SETTINGS SAVED");
-                        } else std::snprintf(store_message,sizeof(store_message),"WIFI SAVE FAILED");
+                        save_wifi_settings();
+                        if(connect_wifi_credentials(wifi_ssid_input,wifi_password_input))start_time_sync();
+                        wifi_setup_step=0;
                     }
                 } else if(ch>=32&&ch<127){
                     if(wifi_setup_step==1&&std::strlen(wifi_ssid_input)<32){size_t n=std::strlen(wifi_ssid_input);wifi_ssid_input[n]=ch;wifi_ssid_input[n+1]=0;}
-                    else if(wifi_setup_step==2&&std::strlen(wifi_password_input)<64){size_t n=std::strlen(wifi_password_input);wifi_password_input[n]=ch;wifi_password_input[n+1]=0;}
+                    else if((wifi_setup_step==2||wifi_setup_step==4)&&std::strlen(wifi_password_input)<64){size_t n=std::strlen(wifi_password_input);wifi_password_input[n]=ch;wifi_password_input[n+1]=0;}
                 }
             } else if(is_up(key)||is_down(key)){settings_selection=(settings_selection+(is_up(key)?4:1))%5;}
             else if(is_left(key)||is_right(key)){
@@ -1065,7 +1084,7 @@ void poll_keyboard() {
                 else if(settings_selection==4){sound_enabled=!sound_enabled;save_settings();}
             } else if(key==KEY_ENTER){
                 if(settings_selection==1){dark_theme=!dark_theme;save_settings();}
-                else if(settings_selection==2){load_wifi_settings();wifi_setup_step=1;}
+                else if(settings_selection==2){load_wifi_settings();wifi_setup_step=3;scan_wifi_networks();}
                 else if(settings_selection==3){bluetooth_screen=true;if(!start_ble_scan())ui_dirty=true;}
                 else if(settings_selection==4){sound_enabled=!sound_enabled;save_settings();}
             } else if(key==KEY_ESC)active_app=-1;
