@@ -148,6 +148,13 @@ bool boot_button_was_pressed = false;
 constexpr int kAppsPerPage = 4;
 constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT","STOPWATCH","OS UPDATER"};
 constexpr int kAppCount = sizeof(kApps) / sizeof(kApps[0]);
+int launcher_order[kAppCount]={};
+bool launcher_foldered[kAppCount]={};
+bool organizer_mode=false, folder_open=false;
+int organizer_selected=0, folder_selected=0;
+int installed_package_count=0;
+char installed_package_ids[16][64]={};
+char installed_package_titles[16][64]={};
 alignas(4) std::uint16_t framebuffer[kWidth * kHeight];
 
 constexpr std::uint16_t rgb565(std::uint8_t r, std::uint8_t g, std::uint8_t b) {
@@ -829,6 +836,101 @@ bool launch_installed_package(const char* id) {
     }
     cJSON_Delete(root);return valid;
 }
+void save_launcher_layout() {
+    if(!sd_ready)return;
+    mkdir("/sdcard/MCAI-OS",0775);
+    FILE* f=std::fopen("/sdcard/MCAI-OS/launcher.cfg.tmp","w");
+    if(!f)return;
+    std::fprintf(f,"MCAI-LAUNCHER-1\\n");
+    for(int i=0;i<kAppCount;i++){
+        const int id=launcher_order[i];
+        std::fprintf(f,"%d %d\\n",id,(id>=0&&id<kAppCount&&launcher_foldered[id])?1:0);
+    }
+    const bool ok=std::fclose(f)==0;
+    if(ok)rename("/sdcard/MCAI-OS/launcher.cfg.tmp","/sdcard/MCAI-OS/launcher.cfg");
+}
+void load_launcher_layout() {
+    for(int i=0;i<kAppCount;i++){launcher_order[i]=i;launcher_foldered[i]=false;}
+    if(!sd_ready)return;
+    FILE* f=std::fopen("/sdcard/MCAI-OS/launcher.cfg","r");
+    if(!f)return;
+    char header[32]={};std::fgets(header,sizeof(header),f);
+    if(std::strcmp(header,"MCAI-LAUNCHER-1\\n")!=0){std::fclose(f);return;}
+    bool seen[kAppCount]={};
+    for(int i=0;i<kAppCount;i++){
+        int id=-1,folder=0;
+        if(std::fscanf(f,"%d %d",&id,&folder)!=2||id<0||id>=kAppCount||seen[id])break;
+        launcher_order[i]=id;launcher_foldered[id]=folder!=0;seen[id]=true;
+    }
+    std::fclose(f);
+}
+int launcher_folder_count() {
+    int n=0;for(int i=0;i<kAppCount;i++)if(launcher_foldered[i])++n;return n;
+}
+int launcher_root_count() {
+    int n=installed_package_count+(launcher_folder_count()>0?1:0);
+    for(int i=0;i<kAppCount;i++)if(!launcher_foldered[launcher_order[i]])++n;
+    return n;
+}
+int launcher_root_item(int position) {
+    int n=0;
+    for(int i=0;i<kAppCount;i++){const int id=launcher_order[i];if(launcher_foldered[id])continue;if(n++==position)return id;}
+    if(launcher_folder_count()>0){if(n++==position)return -1;}
+    const int p=position-n;
+    if(p>=0&&p<installed_package_count)return kAppCount+p;
+    return -2;
+}
+int launcher_folder_item(int position) {
+    int n=0;for(int i=0;i<kAppCount;i++){const int id=launcher_order[i];if(launcher_foldered[id]&&n++==position)return id;}return -2;
+}
+const char* launcher_item_name(int item) {
+    if(item==-1)return "MY FOLDER";
+    if(item>=0&&item<kAppCount)return kApps[item];
+    const int p=item-kAppCount;
+    if(p>=0&&p<installed_package_count)return installed_package_titles[p];
+    return "UNKNOWN APP";
+}
+void refresh_installed_packages() {
+    installed_package_count=0;
+    if(!sd_ready)return;
+    mkdir("/sdcard/MCAI-OS",0775);mkdir("/sdcard/MCAI-OS/apps",0775);
+    DIR* d=opendir("/sdcard/MCAI-OS/apps");if(!d)return;
+    struct dirent* e;
+    while((e=readdir(d))!=nullptr&&installed_package_count<16){
+        const size_t n=std::strlen(e->d_name);
+        if(n<6||std::strcmp(e->d_name+n-5,".json")!=0)continue;
+        char path[160];std::snprintf(path,sizeof(path),"/sdcard/MCAI-OS/apps/%.63s",e->d_name);
+        FILE* f=std::fopen(path,"r");if(!f)continue;
+        char data[4096]={};const size_t bytes=std::fread(data,1,sizeof(data)-1,f);std::fclose(f);if(!bytes)continue;
+        cJSON* root=cJSON_Parse(data);if(!root)continue;
+        cJSON* id=cJSON_GetObjectItemCaseSensitive(root,"id");
+        cJSON* ui=cJSON_GetObjectItemCaseSensitive(root,"ui");
+        cJSON* title=ui?cJSON_GetObjectItemCaseSensitive(ui,"title"):nullptr;
+        cJSON* fmt=cJSON_GetObjectItemCaseSensitive(root,"format");
+        if(cJSON_IsString(fmt)&&std::strcmp(fmt->valuestring,"mcai-app-v1")==0&&cJSON_IsString(id)&&cJSON_IsString(title)){
+            bool duplicate=false;for(int i=0;i<installed_package_count;i++)if(std::strcmp(installed_package_ids[i],id->valuestring)==0)duplicate=true;
+            if(!duplicate){std::snprintf(installed_package_ids[installed_package_count],64,"%s",id->valuestring);
+                std::snprintf(installed_package_titles[installed_package_count],64,"%s",title->valuestring);++installed_package_count;}
+        }
+        cJSON_Delete(root);
+    }
+    closedir(d);
+}
+void start_launcher_item(int item) {
+    if(item==-1){folder_open=true;folder_selected=0;return;}
+    if(item>=kAppCount){
+        const int p=item-kAppCount;
+        if(p>=0&&p<installed_package_count&&!launch_installed_package(installed_package_ids[p]))
+            std::snprintf(store_message,sizeof(store_message),"APP LOAD FAILED");
+        return;
+    }
+    if(item<0||item>=kAppCount)return;
+    active_app=item;
+    if(item==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}
+    if(item==1){note_editing=false;refresh_notes();}
+    if(item==5){refresh_store();}
+    if(item==6)last_clock_render_second=-1;
+}
 void install_store_package() {
     if(!catalogue_loaded||store_count==0)return;
     if((std::strcmp(store_status[store_selected],"available")!=0&&std::strcmp(store_status[store_selected],"experimental")!=0)||
@@ -1110,7 +1212,6 @@ void render_home() {
     const auto white=rgb565(244,248,255), muted=rgb565(150,166,190), selected=rgb565(37,68,75);
     if(active_app>=0) { render_app(); return; }
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
-    // Compact version of the new green MCAI keycap + retro OS-window logo.
     fill_rect(0,0,kWidth,47,rgb565(126,217,87));
     const char keys[]="MCAI";
     for(int i=0;i<4;i++) {
@@ -1118,27 +1219,56 @@ void render_home() {
         fill_round_rect(x+2,5,55,27,6,rgb565(0,0,0));
         fill_round_rect(x,3,53,26,6,rgb565(0,0,0));
         fill_round_rect(x+2,5,49,22,5,rgb565(254,254,254));
-        char letter[2]={keys[i],0};
-        draw_text(letter,x+17,10,2,rgb565(0,0,0));
+        char letter[2]={keys[i],0};draw_text(letter,x+17,10,2,rgb565(0,0,0));
     }
-    fill_rect(4,34,232,12,rgb565(0,0,0));
-    fill_rect(6,36,228,8,rgb565(18,0,120));
+    fill_rect(4,34,232,12,rgb565(0,0,0));fill_rect(6,36,228,8,rgb565(18,0,120));
     draw_text("OS",111,37,1,white);
     draw_text(sd_ready?"SD READY":"NO SD",8,50,1,sd_ready?accent:muted);
     draw_text(wifi_connected?"WIFI ON":"WIFI OFF",142,50,1,wifi_connected?accent:muted);
-    draw_text("APP LAUNCHER",8,61,1,muted);
     if(caps_lock)draw_text("CAP",166,50,1,accent);
     if(shift_held)draw_text("SHF",188,50,1,accent);
     if(fn_lock)draw_text("FN",218,50,1,accent);
-    const int page=selected_app/kAppsPerPage, pages=(kAppCount+kAppsPerPage-1)/kAppsPerPage;
-    for(int row=0;row<4;row++) { const int i=page*kAppsPerPage+row; if(i>=kAppCount) break;
-        const int y=73+row*12; fill_rect(7,y,226,11,i==selected_app?selected:card);
-        if(i==selected_app) { fill_rect(7,y,3,11,accent); } draw_text(kApps[i],15,y+2,1,i==selected_app?accent:white); }
-    char p[20]; std::snprintf(p,sizeof(p),"PAGE %d/%d",page+1,pages); draw_text(p,8,124,1,accent);
-    draw_text("UP/DOWN ENTER",150,124,1,muted);
+    if(organizer_mode){
+        draw_text("ORGANIZE APPS",8,62,1,accent);
+        const int page=organizer_selected/kAppsPerPage;
+        for(int row=0;row<4;row++){
+            const int pos=page*kAppsPerPage+row;if(pos>=kAppCount)break;
+            const int id=launcher_order[pos],y=73+row*12;
+            fill_rect(7,y,226,11,pos==organizer_selected?selected:card);
+            char label[38];std::snprintf(label,sizeof(label),"%s%s",kApps[id],launcher_foldered[id]?"  IN FOLDER":"");
+            draw_text(label,15,y+2,1,pos==organizer_selected?accent:white);
+        }
+        draw_text("O/ESC DONE  F FOLDER",8,124,1,accent);
+        draw_text("LEFT/RIGHT MOVE",145,124,1,muted);
+    } else if(folder_open){
+        draw_text("MY FOLDER",8,62,1,accent);
+        const int total=launcher_folder_count();
+        if(folder_selected>=total)folder_selected=std::max(0,total-1);
+        const int page=folder_selected/kAppsPerPage;
+        for(int row=0;row<4;row++){
+            const int pos=page*kAppsPerPage+row;if(pos>=total)break;
+            const int id=launcher_folder_item(pos),y=73+row*12;
+            fill_rect(7,y,226,11,pos==folder_selected?selected:card);
+            draw_text(kApps[id],15,y+2,1,pos==folder_selected?accent:white);
+        }
+        draw_text("ENTER OPEN  BKSP BACK",8,124,1,accent);
+    } else {
+        const int total=launcher_root_count();
+        if(selected_app>=total)selected_app=std::max(0,total-1);
+        const int page=selected_app/kAppsPerPage,pages=std::max(1,(total+kAppsPerPage-1)/kAppsPerPage);
+        draw_text("APP LAUNCHER",8,62,1,muted);
+        for(int row=0;row<4;row++){
+            const int pos=page*kAppsPerPage+row;if(pos>=total)break;
+            const int item=launcher_root_item(pos),y=73+row*12;
+            fill_rect(7,y,226,11,pos==selected_app?selected:card);
+            if(pos==selected_app)fill_rect(7,y,3,11,accent);
+            draw_text(launcher_item_name(item),15,y+2,1,pos==selected_app?accent:white);
+        }
+        char p[20];std::snprintf(p,sizeof(p),"PAGE %d/%d",page+1,pages);draw_text(p,8,124,1,accent);
+        draw_text("O: ORGANIZE  ENTER: OPEN",105,124,1,muted);
+    }
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
 }
-
 void init_display() {
     gpio_config_t boot = {};
     boot.pin_bit_mask = 1ULL << GPIO_NUM_0;
@@ -1368,9 +1498,30 @@ void poll_keyboard() {
         last_char=ch?ch:(key==KEY_UP?'^':key==KEY_DOWN?'v':key==KEY_LEFT?'<':key==KEY_RIGHT?'>':'?');
         ++keypress_count;
         if(active_app<0){
-            if(is_up(key)||is_left(key)){selected_app=(selected_app+kAppCount-1)%kAppCount;play_menu_sound();}
-            else if(is_down(key)||is_right(key)){selected_app=(selected_app+1)%kAppCount;play_menu_sound();}
-            else if(key==KEY_ENTER){play_menu_sound();active_app=selected_app;if(active_app==0){std::snprintf(current_dir,sizeof(current_dir),"/sdcard");refresh_files();}if(active_app==1){note_editing=false;refresh_notes();}if(active_app==5){refresh_store();}if(active_app==6){last_clock_render_second=-1;}}
+            if(organizer_mode){
+                if(is_back(key)||ch=='o'||ch=='O')organizer_mode=false;
+                else if(is_up(key))organizer_selected=(organizer_selected+kAppCount-1)%kAppCount;
+                else if(is_down(key))organizer_selected=(organizer_selected+1)%kAppCount;
+                else if(is_left(key)||is_right(key)){
+                    const int next=organizer_selected+(is_left(key)?-1:1);
+                    if(next>=0&&next<kAppCount){std::swap(launcher_order[organizer_selected],launcher_order[next]);organizer_selected=next;save_launcher_layout();}
+                } else if(ch=='f'||ch=='F'){
+                    const int id=launcher_order[organizer_selected];launcher_foldered[id]=!launcher_foldered[id];save_launcher_layout();
+                }
+            } else if(folder_open){
+                const int total=launcher_folder_count();
+                if(is_back(key)){folder_open=false;selected_app=0;}
+                else if(is_up(key)&&total>0)folder_selected=(folder_selected+total-1)%total;
+                else if(is_down(key)&&total>0)folder_selected=(folder_selected+1)%total;
+                else if(key==KEY_ENTER&&total>0)start_launcher_item(launcher_folder_item(folder_selected));
+            } else {
+                const int total=launcher_root_count();
+                if(ch=='o'||ch=='O'){organizer_mode=true;organizer_selected=0;}
+                else if(is_up(key)||is_left(key)){if(total>0)selected_app=(selected_app+total-1)%total;play_menu_sound();}
+                else if(is_down(key)||is_right(key)){if(total>0)selected_app=(selected_app+1)%total;play_menu_sound();}
+                else if(key==KEY_ENTER){play_menu_sound();start_launcher_item(launcher_root_item(selected_app));}
+            }
+            ui_dirty=true;
             continue;
         }
         if(active_app==0){
@@ -1476,7 +1627,7 @@ void poll_keyboard() {
                         if(builtin==6)last_clock_render_second=-1;
                     } else if(package_installed(store_ids[store_selected])) {
                         if(!launch_installed_package(store_ids[store_selected]))std::snprintf(store_message,sizeof(store_message),"APP LOAD FAILED");
-                    } else install_store_package();
+                    } else {install_store_package();refresh_installed_packages();}
                 }
             }
         } else if(active_app==13){
@@ -1563,7 +1714,7 @@ extern "C" void app_main(void) {
         if(gpio_get_level(GPIO_NUM_0)==0) break;
         vTaskDelay(pdMS_TO_TICKS(20));
     }
-    init_audio();init_sd_card();load_settings();seed_store();apply_brightness();
+    init_audio();init_sd_card();load_settings();load_launcher_layout();refresh_installed_packages();seed_store();apply_brightness();
     const esp_err_t ota_mark=esp_ota_mark_app_valid_cancel_rollback();
     if(ota_mark!=ESP_OK&&ota_mark!=ESP_ERR_NOT_FOUND)ESP_LOGW(kTag,"OTA validation mark: %s",esp_err_to_name(ota_mark));
     render_home();play_tone(660,90);
@@ -1573,7 +1724,9 @@ extern "C" void app_main(void) {
         const bool boot_pressed=gpio_get_level(GPIO_NUM_0)==0;
         if(boot_pressed&&!boot_button_was_pressed){
             if(active_app>=0){if(active_app==1)save_note();active_app=-1;viewing_file=false;}
-            else {active_app=selected_app;if(active_app==0){std::strcpy(current_dir,"/sdcard");refresh_files();}if(active_app==1){note_editing=false;refresh_notes();}if(active_app==5){seed_store();refresh_store();}}
+            else if(organizer_mode){organizer_mode=false;}
+            else if(folder_open){const int id=launcher_folder_item(folder_selected);start_launcher_item(id);}
+            else {const int item=launcher_root_item(selected_app);if(item==-1){folder_open=true;folder_selected=0;}else start_launcher_item(item);}
         }
         boot_button_was_pressed=boot_pressed;
         const std::int64_t now=esp_timer_get_time();
