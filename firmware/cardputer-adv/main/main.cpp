@@ -288,6 +288,9 @@ void draw_mcaI_logo_splash() {
     fill_rect(67,57,106,11,navy);
     fill_rect(67,69,106,41,grey);
     draw_text("OS",83,69,6,black);
+    char reset_line[28];
+    std::snprintf(reset_line,sizeof(reset_line),"RESET CODE: %d",(int)esp_reset_reason());
+    draw_text(reset_line,78,108,1,black);
     draw_text("PRESS ANY BUTTON TO START",42,120,1,black);
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
 }
@@ -1792,7 +1795,9 @@ void poll_keyboard() {
 }} // namespace
 
 extern "C" void app_main(void) {
-    ESP_LOGI(kTag,"Starting MCAI-OS Cardputer ADV");
+    ESP_LOGI(kTag,"Starting MCAI-OS Cardputer ADV; previous reset reason=%d; free heap=%u; largest block=%u",
+             (int)esp_reset_reason(),(unsigned)esp_get_free_heap_size(),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
     // Set up the ADV backlight before touching the LCD. GPIO38 must not be
     // driven as a plain HIGH output: it is a shared power/backlight rail.
     ledc_timer_config_t timer={};
