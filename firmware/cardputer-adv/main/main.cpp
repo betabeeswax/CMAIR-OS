@@ -841,10 +841,10 @@ void save_launcher_layout() {
     mkdir("/sdcard/MCAI-OS",0775);
     FILE* f=std::fopen("/sdcard/MCAI-OS/launcher.cfg.tmp","w");
     if(!f)return;
-    std::fprintf(f,"MCAI-LAUNCHER-1\\n");
+    std::fprintf(f,"MCAI-LAUNCHER-1\n");
     for(int i=0;i<kAppCount;i++){
         const int id=launcher_order[i];
-        std::fprintf(f,"%d %d\\n",id,(id>=0&&id<kAppCount&&launcher_foldered[id])?1:0);
+        std::fprintf(f,"%d %d\n",id,(id>=0&&id<kAppCount&&launcher_foldered[id])?1:0);
     }
     const bool ok=std::fclose(f)==0;
     if(ok)rename("/sdcard/MCAI-OS/launcher.cfg.tmp","/sdcard/MCAI-OS/launcher.cfg");
@@ -855,7 +855,7 @@ void load_launcher_layout() {
     FILE* f=std::fopen("/sdcard/MCAI-OS/launcher.cfg","r");
     if(!f)return;
     char header[32]={};std::fgets(header,sizeof(header),f);
-    if(std::strcmp(header,"MCAI-LAUNCHER-1\\n")!=0){std::fclose(f);return;}
+    if(std::strcmp(header,"MCAI-LAUNCHER-1\n")!=0){std::fclose(f);return;}
     bool seen[kAppCount]={};
     for(int i=0;i<kAppCount;i++){
         int id=-1,folder=0;
