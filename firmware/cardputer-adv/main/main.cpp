@@ -80,6 +80,9 @@ int wifi_setup_step=0;
 char wifi_ssid_input[33]={};
 char wifi_password_input[65]={};
 bool bluetooth_screen=false, ble_ready=false, ble_scan_active=false;
+bool wifi_driver_ready=false;
+char wifi_networks[16][33]={}; int wifi_network_rssi[16]={}; int wifi_network_auth[16]={};
+int wifi_network_count=0, wifi_network_selected=0;
 int ble_device_count=0, ble_device_scroll=0;
 char ble_devices[12][32]={};
 char ble_rssi[12][8]={};
@@ -337,9 +340,9 @@ void ble_gap_callback(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* para
     switch(event) {
     case ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT:
         if(param->scan_param_cmpl.status==ESP_BT_STATUS_SUCCESS) {
-            ble_scan_active=true;
-            const esp_err_t e=esp_ble_gap_start_scanning(12);
-            if(e!=ESP_OK) { ble_scan_active=false; ESP_LOGE(kTag,"BLE scan start: %s",esp_err_to_name(e)); }
+            const esp_err_t e=esp_ble_gap_start_scanning(6);
+            ble_scan_active=(e==ESP_OK);
+            if(e!=ESP_OK) ESP_LOGE(kTag,"BLE scan start: %s",esp_err_to_name(e));
         } else {
             ble_scan_active=false;
             ESP_LOGE(kTag,"BLE scan parameters failed: %d",param->scan_param_cmpl.status);
@@ -428,15 +431,15 @@ bool start_ble_scan() {
     std::memset(ble_rssi,0,sizeof(ble_rssi));
     std::memset(ble_addresses,0,sizeof(ble_addresses));
     if(!init_bluetooth()) { std::snprintf(store_message,sizeof(store_message),"BLE INIT FAILED"); return false; }
-    ble_scan_params.scan_type=BLE_SCAN_TYPE_ACTIVE;
+    ble_scan_params.scan_type=BLE_SCAN_TYPE_PASSIVE;
     ble_scan_params.own_addr_type=BLE_ADDR_TYPE_PUBLIC;
     ble_scan_params.scan_filter_policy=BLE_SCAN_FILTER_ALLOW_ALL;
     ble_scan_params.scan_interval=0x50;
-    ble_scan_params.scan_window=0x30;
+    ble_scan_params.scan_window=0x20;
     ble_scan_params.scan_duplicate=BLE_SCAN_DUPLICATE_DISABLE;
     const esp_err_t e=esp_ble_gap_set_scan_params(&ble_scan_params);
     if(e!=ESP_OK) { std::snprintf(store_message,sizeof(store_message),"BLE SCAN SETUP FAIL"); ESP_LOGE(kTag,"BLE set scan params: %s",esp_err_to_name(e)); return false; }
-    std::snprintf(store_message,sizeof(store_message),"SCANNING FOR 12 SECONDS");
+    std::snprintf(store_message,sizeof(store_message),"SCANNING FOR 6 SECONDS");
     return true;
 }
 void stop_ble_scan() {
@@ -643,6 +646,8 @@ void render_app() {
     const auto ink=dark_theme?white:rgb565(20,30,45);
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
     draw_text("MCAI",8,7,1,accent);draw_text("OS",39,10,1,muted);
+    if(caps_lock)draw_text("CAP",184,7,1,accent);
+    if(fn_lock)draw_text("FN",214,7,1,accent);
     if(active_app==14)draw_text(package_title,100,7,1,ink);else draw_text(kApps[active_app],100,7,1,ink);
     fill_rect(0,19,kWidth,1,rgb565(44,59,78));
     char line[64];
@@ -990,6 +995,7 @@ void poll_keyboard() {
         } else if(active_app==2){
             if(key==KEY_ESC)active_app=-1;
             else if(key==KEY_BACKSPACE){if(calc_length>0)calc_buffer[--calc_length]=0;}
+            else if(ch=='c'||ch=='C'){calc_buffer[0]=0;calc_length=0;}
             else if(key==KEY_ENTER)calculate();
             else if(ch>=32&&ch<127&&calc_length<(int)sizeof(calc_buffer)-2){calc_buffer[calc_length++]=ch;calc_buffer[calc_length]=0;}
         } else if(active_app==3){
