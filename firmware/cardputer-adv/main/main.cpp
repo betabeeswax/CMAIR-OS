@@ -1814,39 +1814,29 @@ extern "C" void app_main(void) {
     init_display();
     init_keyboard();
     draw_mcaI_logo_splash();
-    // Never trap the device on the splash screen if the keyboard controller
-    // fails to initialize or its first key event is missed.
+    // Do not access the TCA8418 event FIFO while the splash screen is active.
+    // On this board, an early key event is causing a reset before the launcher
+    // appears. Let the splash display briefly, finish all storage/settings setup,
+    // then discard any key events collected during boot before enabling input.
     keypress_count=0;
-    const std::int64_t boot_wait_until=esp_timer_get_time()+8000000;
-    bool splash_dismissed=false;
-    while(keyboard_ready && !splash_dismissed && esp_timer_get_time()<boot_wait_until) {
-        // During the splash screen, consume a key only to dismiss the splash.
-        // Do NOT call poll_keyboard(): it runs normal launcher/app actions before
-        // SD, settings and the launcher have finished initializing.
-        std::uint8_t pending=0;
-        if(keyboard_read(0x03,&pending)==ESP_OK && (pending&0x0F)) {
-            std::uint8_t remaining=pending&0x0F;
-            while(remaining--) {
-                std::uint8_t ignored=0;
-                if(keyboard_read(0x04,&ignored)!=ESP_OK) break;
-            }
-            splash_dismissed=true;
-            break;
-        }
-        if(gpio_get_level(GPIO_NUM_0)==0) {
-            splash_dismissed=true;
-            break;
-        }
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
-    // A boot-button press used to dismiss the splash must not also activate
-    // the currently selected launcher item on the first main-loop iteration.
+    vTaskDelay(pdMS_TO_TICKS(1200));
     boot_button_was_pressed=(gpio_get_level(GPIO_NUM_0)==0);
     // Keep boot recovery-safe: audio/I2S initialization is temporarily disabled
     // until it has been verified on Cardputer ADV hardware. A failure here
     // happens exactly when leaving the splash screen and can look like a reboot loop.
     audio_ready=false;
     init_sd_card();load_settings();load_launcher_layout();refresh_installed_packages();seed_store();apply_brightness();
+    if(keyboard_ready) {
+        std::uint8_t pending=0;
+        if(keyboard_read(0x03,&pending)==ESP_OK) {
+            std::uint8_t remaining=pending&0x0F;
+            while(remaining--) {
+                std::uint8_t ignored=0;
+                if(keyboard_read(0x04,&ignored)!=ESP_OK) break;
+            }
+        }
+        keyboard_write(0x02,0x1F);
+    }
     const esp_err_t ota_mark=esp_ota_mark_app_valid_cancel_rollback();
     if(ota_mark!=ESP_OK&&ota_mark!=ESP_ERR_NOT_FOUND)ESP_LOGW(kTag,"OTA validation mark: %s",esp_err_to_name(ota_mark));
     render_home();play_tone(660,90);
