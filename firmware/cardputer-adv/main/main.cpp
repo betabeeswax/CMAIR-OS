@@ -1044,14 +1044,13 @@ void init_keyboard() {
     if(i2c_param_config(I2C_NUM_0,&cfg)!=ESP_OK || i2c_driver_install(I2C_NUM_0,cfg.mode,0,0,0)!=ESP_OK) {
         ESP_LOGW(kTag,"I2C initialization failed"); return;
     }
-    // Match M5Stack's Cardputer ADV TCA8418 setup: GPIO defaults, 7x8
-    // matrix, clear stale FIFO/status, then enable keypad + GPIO interrupts.
+    // Cardputer ADV uses the TCA8418 7x8 keypad matrix.
+    // Only keypad events are enabled; GPIO event interrupts are not used.
     const std::uint8_t setup[][2] = {
-        {0x23,0x00},{0x24,0x00},{0x25,0x00}, // GPIO direction: inputs
-        {0x20,0xFF},{0x21,0xFF},{0x22,0xFF}, // GPI event mode
-        {0x26,0x00},{0x27,0x00},{0x28,0x00}, // falling-edge interrupt mode
-        {0x1A,0xFF},{0x1B,0xFF},{0x1C,0xFF}, // GPIO interrupts
-        {0x1D,0x7F},{0x1E,0xFF},{0x1F,0x00}  // 7 rows x 8 columns
+        {0x1D,0x7F}, // KP_GPIO1: rows R0-R6
+        {0x1E,0xFF}, // KP_GPIO2: columns C0-C7
+        {0x1F,0x00}, // KP_GPIO3: unused
+        {0x01,0x99}  // CFG: auto-increment, overflow mode, interrupt config, key events
     };
     for(const auto& reg:setup) {
         if(keyboard_write(reg[0],reg[1])!=ESP_OK) {
@@ -1063,11 +1062,7 @@ void init_keyboard() {
         std::uint8_t discard=0;
         if(keyboard_read(0x04,&discard)!=ESP_OK) break;
     }
-    keyboard_read(0x11,&stale); keyboard_read(0x12,&stale); keyboard_read(0x13,&stale);
-    keyboard_write(0x02,0x03); // clear keypad + GPIO interrupt status
-    if(keyboard_write(0x01,0x03)!=ESP_OK) {
-        ESP_LOGW(kTag,"TCA8418 interrupt enable failed"); return;
-    }
+    keyboard_write(0x02,0x1F); // clear all pending interrupt status bits
     keyboard_ready=true;
     ESP_LOGI(kTag,"TCA8418 7x8 matrix initialized");
 }
@@ -1168,11 +1163,11 @@ void poll_keyboard() {
     std::uint8_t count=0;if(keyboard_read(0x03,&count)!=ESP_OK)return;count&=0x0F;
     while(count--){
         std::uint8_t event=0;if(keyboard_read(0x04,&event)!=ESP_OK||event==0)break;
-        // TCA8418 event format: 0x01..0x50 = key DOWN,
-        // 0x81..0xD0 = key UP. The high bit therefore means RELEASE.
-        const bool pressed=(event&0x80)==0;
+        // TCA8418 event format: high bit SET means key DOWN;
+        // high bit CLEAR means key UP (release).
+        const bool pressed=(event&0x80)!=0;
         const int raw=(event&0x7F);
-        if(raw<=0||raw>0x50)continue; // Ignore GPIO events, not matrix keys.
+        if(raw<=0||raw>70)continue; // Cardputer ADV is a 7-row x 8-column matrix.
         const int raw_index=raw-1, raw_row=raw_index/10, raw_col=raw_index%10;
         // TCA8418 raw FIFO positions are remapped exactly as M5Stack's ADV driver.
         const int row=(raw_col+4)%4, col=raw_row*2+(raw_col>3?1:0);
