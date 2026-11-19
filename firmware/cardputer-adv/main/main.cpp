@@ -1818,11 +1818,30 @@ extern "C" void app_main(void) {
     // fails to initialize or its first key event is missed.
     keypress_count=0;
     const std::int64_t boot_wait_until=esp_timer_get_time()+8000000;
-    while(keyboard_ready && keypress_count==0 && esp_timer_get_time()<boot_wait_until) {
-        poll_keyboard();
-        if(gpio_get_level(GPIO_NUM_0)==0) break;
+    bool splash_dismissed=false;
+    while(keyboard_ready && !splash_dismissed && esp_timer_get_time()<boot_wait_until) {
+        // During the splash screen, consume a key only to dismiss the splash.
+        // Do NOT call poll_keyboard(): it runs normal launcher/app actions before
+        // SD, settings and the launcher have finished initializing.
+        std::uint8_t pending=0;
+        if(keyboard_read(0x03,&pending)==ESP_OK && (pending&0x0F)) {
+            std::uint8_t remaining=pending&0x0F;
+            while(remaining--) {
+                std::uint8_t ignored=0;
+                if(keyboard_read(0x04,&ignored)!=ESP_OK) break;
+            }
+            splash_dismissed=true;
+            break;
+        }
+        if(gpio_get_level(GPIO_NUM_0)==0) {
+            splash_dismissed=true;
+            break;
+        }
         vTaskDelay(pdMS_TO_TICKS(20));
     }
+    // A boot-button press used to dismiss the splash must not also activate
+    // the currently selected launcher item on the first main-loop iteration.
+    boot_button_was_pressed=(gpio_get_level(GPIO_NUM_0)==0);
     // Keep boot recovery-safe: audio/I2S initialization is temporarily disabled
     // until it has been verified on Cardputer ADV hardware. A failure here
     // happens exactly when leaving the splash screen and can look like a reboot loop.
