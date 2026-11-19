@@ -960,8 +960,14 @@ void refresh_installed_packages() {
         if(n<6||std::strcmp(e->d_name+n-5,".json")!=0)continue;
         char path[160];std::snprintf(path,sizeof(path),"/sdcard/MCAI-OS/apps/%.63s",e->d_name);
         FILE* f=std::fopen(path,"r");if(!f)continue;
-        char data[4096]={};const size_t bytes=std::fread(data,1,sizeof(data)-1,f);std::fclose(f);if(!bytes)continue;
-        cJSON* root=cJSON_Parse(data);if(!root)continue;
+        // Keep the package JSON buffer on the heap. This function runs during
+        // app_main startup, where a 4 KB stack buffer can exhaust the ESP main
+        // task stack once filesystem and JSON parsing call frames are included.
+        char* data=static_cast<char*>(std::calloc(1,4096));
+        if(!data){std::fclose(f);ESP_LOGW(kTag,"Not enough heap to scan installed app");continue;}
+        const size_t bytes=std::fread(data,1,4095,f);std::fclose(f);
+        if(!bytes){std::free(data);continue;}
+        cJSON* root=cJSON_Parse(data);std::free(data);if(!root)continue;
         cJSON* id=cJSON_GetObjectItemCaseSensitive(root,"id");
         cJSON* ui=cJSON_GetObjectItemCaseSensitive(root,"ui");
         cJSON* title=ui?cJSON_GetObjectItemCaseSensitive(ui,"title"):nullptr;
