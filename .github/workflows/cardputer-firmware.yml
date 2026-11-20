@@ -27,7 +27,7 @@ jobs:
           esp_idf_version: v5.3
           target: esp32s3
           path: firmware/cardputer-adv
-          command: idf.py build && idf.py merge-bin -o MCAI-OS.bin && cp build/mcai_os_cardputer_adv.bin build/MCAI-OS-app.bin
+          command: idf.py build && idf.py merge-bin -o MCAI-OS.bin && cp build/cmair_os_cardputer_adv.bin build/MCAI-OS-app.bin
       - name: Upload firmware build
         uses: actions/upload-artifact@v4
         with:
