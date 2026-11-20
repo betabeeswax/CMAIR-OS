@@ -384,21 +384,18 @@ void refresh_notes() {
     std::snprintf(store_message,sizeof(store_message),"ADD A NOTE OR SELECT ONE BELOW");
 }
 bool save_note() {
-    if(!sd_ready || !note_filename[0] || note_length<0 || note_length>=(int)sizeof(note_buffer)){std::snprintf(store_message,sizeof(store_message),"NOTE NOT SAVED - CHECK SD");return false;}
-    char temp_path[128]={};std::snprintf(temp_path,sizeof(temp_path),"%s.tmp",note_filename);
-    FILE* f=std::fopen(temp_path,"w");if(!f){std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;}
-    const size_t written=std::fwrite(note_buffer,1,(size_t)note_length,f);
-    const bool flush_ok=std::fflush(f)==0;const bool sync_ok=flush_ok&&fsync(fileno(f))==0;const bool close_ok=std::fclose(f)==0;
-    if(written!=(size_t)note_length||!sync_ok||!close_ok){unlink(temp_path);std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;}
-    // FAT filesystems may refuse rename-over-existing; keep a backup while swapping.
-    char backup_path[128]={};std::snprintf(backup_path,sizeof(backup_path),"%s.bak",note_filename);
-    struct stat existing{};const bool had_previous=stat(note_filename,&existing)==0;
-    if(had_previous){unlink(backup_path);if(rename(note_filename,backup_path)!=0){unlink(temp_path);std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;}}
-    if(rename(temp_path,note_filename)!=0){
-        if(had_previous)rename(backup_path,note_filename);
-        unlink(temp_path);std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;
+    if(!sd_ready || !note_filename[0] || note_length<0 || note_length>=(int)sizeof(note_buffer)){
+        std::snprintf(store_message,sizeof(store_message),"INSERT SD / CHECK NOTE");return false;
     }
-    if(had_previous)unlink(backup_path);
+    // Direct FAT write avoids the temp/rename/fsync sequence that can fail on SD.
+    FILE* f=std::fopen(note_filename,"w");
+    if(!f){std::snprintf(store_message,sizeof(store_message),"NOTE FILE OPEN FAILED");return false;}
+    const size_t written=std::fwrite(note_buffer,1,(size_t)note_length,f);
+    const bool flush_ok=std::fflush(f)==0;
+    const bool close_ok=std::fclose(f)==0;
+    if(written!=(size_t)note_length||!flush_ok||!close_ok){
+        std::snprintf(store_message,sizeof(store_message),"NOTE WRITE FAILED");return false;
+    }
     std::snprintf(store_message,sizeof(store_message),"NOTE SAVED");return true;
 }
 void open_note(int index) {
@@ -731,8 +728,14 @@ bool connect_wifi_from_sd() {
 void ota_update_task(void*) {
     std::snprintf(ota_message,sizeof(ota_message),"CHECKING WI-FI...");
     ui_dirty=true;
-    if(!wifi_connected && !connect_wifi_from_sd()) {
-        std::snprintf(ota_message,sizeof(ota_message),"WI-FI FAILED - CHECK SETTINGS");
+    if(!connect_wifi_from_sd()) {
+        std::snprintf(ota_message,sizeof(ota_message),"WI-FI FAILED - SETTINGS");
+        ota_running=false;ui_dirty=true;vTaskDelete(nullptr);return;
+    }
+    start_time_sync();
+    for(int wait=0;wait<20&&std::time(nullptr)<1577836800;wait++)vTaskDelay(pdMS_TO_TICKS(500));
+    if(std::time(nullptr)<1577836800){
+        std::snprintf(ota_message,sizeof(ota_message),"TIME NOT SYNCED - RETRY");
         ota_running=false;ui_dirty=true;vTaskDelete(nullptr);return;
     }
     std::snprintf(ota_message,sizeof(ota_message),"DOWNLOADING UPDATE...");
@@ -740,11 +743,7 @@ void ota_update_task(void*) {
     esp_http_client_config_t http_cfg={};
     http_cfg.url="https://github.com/betabeeswax/MCAI-OS/releases/download/v0.1.0-alpha/cmair-os-cardputer-adv-app.bin";
     http_cfg.crt_bundle_attach=esp_crt_bundle_attach;
-    http_cfg.timeout_ms=30000;
-    if(std::time(nullptr)<1577836800){
-        std::snprintf(ota_message,sizeof(ota_message),"TIME NOT SYNCED - TRY AGAIN");
-        ota_running=false;ui_dirty=true;vTaskDelete(nullptr);return;
-    }
+    http_cfg.timeout_ms=45000;
     esp_https_ota_config_t ota_cfg={};
     ota_cfg.http_config=&http_cfg;
     const esp_err_t err=esp_https_ota(&ota_cfg);
@@ -754,7 +753,7 @@ void ota_update_task(void*) {
         vTaskDelay(pdMS_TO_TICKS(700));
         esp_restart();
     }
-    std::snprintf(ota_message,sizeof(ota_message),"UPDATE FAILED - TRY AGAIN");
+    std::snprintf(ota_message,sizeof(ota_message),"UPDATE FAILED: %.24s",esp_err_to_name(err));
     ota_running=false;ui_dirty=true;
     ESP_LOGE(kTag,"OTA update failed: %s",esp_err_to_name(err));
     vTaskDelete(nullptr);
@@ -1312,9 +1311,11 @@ void render_app() {
         int left=timer_seconds;if(timer_running)left=(int)std::max<std::int64_t>(0,(timer_end_us-esp_timer_get_time()+999999)/1000000);
         std::snprintf(line,sizeof(line),"%02d:%02d:%02d",left/3600,(left/60)%60,left%60);
         draw_text("COUNTDOWN TIMER",8,25,1,accent);draw_text(timer_running?line:timer_input,8,49,3,ink);
-        draw_text(timer_running?"RUNNING":"TYPE HH:MM:SS",8,91,1,muted);
-        draw_text(timer_running?"ENTER PAUSE":"ENTER START  C CLEAR",8,110,1,muted);
-        draw_text("BACKSPACE DELETE  R RESET",8,123,1,muted);break;}
+        const char* fields[]={"HOURS","MINUTES","SECONDS"};
+        char field_line[32];std::snprintf(field_line,sizeof(field_line),timer_running?"RUNNING":"EDIT %s",fields[timer_field]);
+        draw_text(field_line,8,91,1,muted);
+        draw_text(timer_running?"ENTER PAUSE":"LEFT/RIGHT FIELD  UP/DN +/-",8,110,1,muted);
+        draw_text("ENTER START  R 1 MIN  C CLEAR",8,123,1,muted);break;}
     case 8:
         draw_text("KEYBOARD TEST",8,27,1,accent);draw_text("LAST KEY:",8,48,1,muted);draw_text(last_key_label,68,48,1,ink);
         std::snprintf(line,sizeof(line),"KEY EVENTS: %lu",(unsigned long)keypress_count);draw_text(line,8,69,1,ink);
@@ -1642,15 +1643,13 @@ void poll_keyboard() {
         // The four physical arrow keys have secondary legends ; , . /.
         // Without Fn they are navigation keys; with Fn they type their legends.
         if(fn_lock){
-            if(row==0&&col==0)key=KEY_ESC;
+            if(row==0&&col==0){key=KEY_ESC;ch=0;} // Fn + backtick = Escape
             else if(row==0&&col>=1&&col<=12){ch=0;std::snprintf(last_key_label,sizeof(last_key_label),"F%d",col);}
-            else if(row==0&&col==13)key=KEY_DELETE;
-        } else {
-            if(row==2&&col==12){key=KEY_ESC;ch=0;} // apostrophe key is Escape without Fn
-            else if(row==2&&col==11)key=KEY_UP;       // ; / Up
-            else if(row==3&&col==10)key=KEY_LEFT; // , / Left
-            else if(row==3&&col==11)key=KEY_DOWN; // . / Down
-            else if(row==3&&col==12)key=KEY_RIGHT;// / / Right
+            else if(row==0&&col==13){key=KEY_DELETE;ch=0;}
+            else if(row==2&&col==11){key=KEY_UP;ch=0;}       // Fn + ;
+            else if(row==3&&col==10){key=KEY_LEFT;ch=0;}    // Fn + ,
+            else if(row==3&&col==11){key=KEY_DOWN;ch=0;}    // Fn + .
+            else if(row==3&&col==12){key=KEY_RIGHT;ch=0;}   // Fn + /
         }
         if(!key){
             if(row==0&&col==13)key=KEY_BACKSPACE;
