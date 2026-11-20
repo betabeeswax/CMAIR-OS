@@ -379,7 +379,8 @@ void refresh_notes() {
     // Read the current folder and older Cardputer notes folders so existing
     // notes created by previous MCAI-OS builds remain visible.
     const char* folders[]={"/sdcard/MCAI-OS/notes","/sdcard/notes","/sdcard/Notes"};
-    for(const char* folder:folders) {
+    for(std::uint8_t folder_index=0;folder_index<3;folder_index++) {
+        const char* folder=folders[folder_index];
         DIR* d=opendir(folder);
         if(!d)continue;
         struct dirent* e;
@@ -395,10 +396,10 @@ void refresh_notes() {
             struct stat st{};
             if(stat(full,&st)!=0 || !S_ISREG(st.st_mode))continue;
             bool duplicate=false;
-            for(int i=0;i<note_count;i++)if(note_folder[i]==(std::uint8_t)(&folder-&folders[0]) && std::strcmp(note_files[i],e->d_name)==0)duplicate=true;
+            for(int i=0;i<note_count;i++)if(note_folder[i]==folder_index && std::strcmp(note_files[i],e->d_name)==0)duplicate=true;
             if(duplicate)continue;
             std::snprintf(note_files[note_count],sizeof(note_files[0]),"%.39s",e->d_name);
-            note_folder[note_count]=(std::uint8_t)(&folder-&folders[0]);
+            note_folder[note_count]=folder_index;
             ++note_count;
         }
         closedir(d);
