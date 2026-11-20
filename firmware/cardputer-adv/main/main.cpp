@@ -135,6 +135,7 @@ char clock_input[8] = {};
 int clock_len = 0;
 int timer_seconds = 60;
 char timer_input[20]="00:01:00";
+int timer_field=2; // 0=hours, 1=minutes, 2=seconds
 bool stopwatch_running=false;
 std::int64_t stopwatch_started_us=0, stopwatch_elapsed_us=0;
 bool timer_running = false;
@@ -1160,13 +1161,13 @@ void render_note_page(int x,int y,int visible,std::uint16_t color) {
     }
 }
 void render_app() {
-    const auto white=dark_theme?rgb565(250,250,250):rgb565(15,15,15);
-    const auto muted=dark_theme?rgb565(180,180,180):rgb565(75,75,75);
-    const auto accent=rgb565(126,217,87);
-    const auto bg=dark_theme?rgb565(0,0,0):rgb565(191,190,191);
+    const auto white=dark_theme?rgb565(255,255,255):rgb565(0,0,0);
+    const auto muted=dark_theme?rgb565(170,170,170):rgb565(75,75,75);
+    const auto accent=dark_theme?rgb565(255,255,255):rgb565(0,0,0);
+    const auto bg=dark_theme?rgb565(0,0,0):rgb565(255,255,255);
     const auto ink=white;
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
-    fill_rect(0,0,kWidth,22,rgb565(18,0,120));
+    fill_rect(0,0,kWidth,22,rgb565(0,0,0));
     fill_round_rect(7,4,14,14,4,accent);
     draw_text("M",11,8,1,rgb565(0,0,0));
     if(active_app==17)draw_text(package_title,28,7,1,ink);
@@ -1197,7 +1198,7 @@ void render_app() {
             draw_text("MY NOTES",8,25,1,accent);
             fill_round_rect(151,22,81,17,4,notes_action==1?accent:muted);
             draw_text("+ ADD NOTE",158,27,1,notes_action==1?bg:ink);
-            fill_rect(8,43,224,1,rgb565(44,59,78));
+            fill_rect(8,43,224,1,rgb565(80,80,80));
             for(int i=0;i<5;i++){
                 const int ix=note_scroll+i;
                 if(ix>=note_count)break;
@@ -1273,7 +1274,7 @@ void render_app() {
         draw_text("GITHUB APP STORE",8,25,1,accent);
         draw_text(catalogue_loaded?"MCAI-OS-APPS / MAIN":"GITHUB CATALOGUE",8,39,1,ink);
         if(store_loading){draw_text("CONNECTING / DOWNLOADING...",8,70,1,accent);}
-        else if(!catalogue_loaded&&store_count==0){draw_text("NO APPS LOADED",8,65,1,accent);draw_text("CHECK WIFI + WIFI.CFG",8,80,1,ink);}
+        else if(!catalogue_loaded&&store_count==0){draw_text("CATALOGUE NOT LOADED",8,65,1,accent);draw_text("SEE ERROR BELOW",8,80,1,ink);}
         for(int i=0;i<4;i++){int ix=store_scroll+i;if(ix>=store_count)break;char row[40];std::snprintf(row,sizeof(row),"%c %.20s %s",ix==store_selected?'>':' ',store_names[ix],store_builtin_index(store_ids[ix])>=0?"BUILT-IN":(package_installed(store_ids[ix])?"INSTALLED":(std::strcmp(store_status[ix],"available")==0?"AVAILABLE":(std::strcmp(store_status[ix],"experimental")==0?"EXPERIMENTAL":"PLANNED"))));draw_text(row,8,54+i*13,1,ix==store_selected?accent:ink);}
         draw_text(store_message,8,110,1,muted);draw_text("UP/DOWN ENTER R RETRY BKSP BACK",8,122,1,muted);break;
     case 6: {
@@ -1362,27 +1363,27 @@ void render_app() {
     default:
         draw_text("MCAI-OS FOR CARDPUTER ADV",8,37,1,ink);draw_text("VERSION 0.2.0",8,57,1,accent);draw_text("BUILT-IN APP SUITE",8,77,1,muted);break;
     }
-    fill_rect(0,122,kWidth,1,rgb565(44,59,78)); // Keep app-specific footer text clear; ESC still returns home.
+    fill_rect(0,122,kWidth,1,rgb565(80,80,80)); // Keep app-specific footer text clear; ESC still returns home.
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
 }
 
 void render_home() {
-    const auto bg=dark_theme?rgb565(28,28,30):rgb565(191,190,191);
+    const auto bg=dark_theme?rgb565(0,0,0):rgb565(255,255,255);
     const auto panel_bg=dark_theme?rgb565(24,24,24):rgb565(245,245,245);
     const auto panel_alt=dark_theme?rgb565(48,48,48):rgb565(220,220,220);
-    const auto ink=dark_theme?rgb565(250,250,250):rgb565(15,15,15);
-    const auto muted=dark_theme?rgb565(180,180,180):rgb565(75,75,75);
-    const auto accent=rgb565(126,217,87);
-    const auto cyan=rgb565(18,0,120);
-    const auto purple=rgb565(191,190,191);
-    const auto selected=dark_theme?rgb565(64,82,54):rgb565(205,231,190);
+    const auto ink=dark_theme?rgb565(255,255,255):rgb565(0,0,0);
+    const auto muted=dark_theme?rgb565(170,170,170):rgb565(75,75,75);
+    const auto accent=dark_theme?rgb565(255,255,255):rgb565(0,0,0);
+    const auto cyan=dark_theme?rgb565(190,190,190):rgb565(70,70,70);
+    const auto purple=rgb565(115,115,115);
+    const auto selected=dark_theme?rgb565(64,64,64):rgb565(205,205,205);
     if(active_app>=0) { render_app(); return; }
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
 
     // MCAI-OS v2 visual system: compact status bar, app tiles and clear focus.
-    fill_rect(0,0,kWidth,25,rgb565(18,0,120));
+    fill_rect(0,0,kWidth,25,rgb565(0,0,0));
     fill_round_rect(7,5,15,15,4,accent);
-    draw_text("M",11,9,1,rgb565(8,18,25));
+    draw_text("M",11,9,1,rgb565(0,0,0));
     draw_text("MCAI",28,6,1,ink);
     draw_text("OS",54,6,1,accent);
     draw_text(sd_ready?"SD":"NO SD",164,6,1,sd_ready?accent:muted);
@@ -1435,7 +1436,7 @@ void render_home() {
             fill_round_rect(x+5,y+6,19,19,5,active?accent:(tile==1?cyan:tile==2?purple:muted));
             const char* label=launcher_item_name(item);
             char icon[2]={label&&label[0]?label[0]:'?',0};
-            draw_text(icon,x+11,y+12,1,rgb565(8,18,25));
+            draw_text(icon,x+11,y+12,1,rgb565(0,0,0));
             char short_name[15]={};
             if(label)std::snprintf(short_name,sizeof(short_name),"%.13s",label);
             draw_text(short_name,x+30,y+8,1,active?accent:ink);
