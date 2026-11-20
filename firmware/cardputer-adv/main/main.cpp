@@ -115,7 +115,7 @@ int file_scroll = 0;
 char note_buffer[512] = {};
 int note_length = 0, note_scroll = 0;
 char note_files[16][40] = {};
-char note_paths[16][112] = {};
+std::uint8_t note_folder[16] = {};
 int note_count=0, note_selected=0, notes_action=1; // 1 = Add Note button, 0 = note list
 char note_filename[112] = {};
 bool note_editing=false;
@@ -395,18 +395,18 @@ void refresh_notes() {
             struct stat st{};
             if(stat(full,&st)!=0 || !S_ISREG(st.st_mode))continue;
             bool duplicate=false;
-            for(int i=0;i<note_count;i++)if(std::strcmp(note_paths[i],full)==0)duplicate=true;
+            for(int i=0;i<note_count;i++)if(note_folder[i]==(std::uint8_t)(&folder-&folders[0]) && std::strcmp(note_files[i],e->d_name)==0)duplicate=true;
             if(duplicate)continue;
             std::snprintf(note_files[note_count],sizeof(note_files[0]),"%.39s",e->d_name);
-            std::snprintf(note_paths[note_count],sizeof(note_paths[0]),"%.111s",full);
+            note_folder[note_count]=(std::uint8_t)(&folder-&folders[0]);
             ++note_count;
         }
         closedir(d);
     }
     for(int i=0;i<note_count;i++)for(int j=i+1;j<note_count;j++)if(std::strcmp(note_files[j],note_files[i])<0){
-        char name[40],saved_path[112];
+        char name[40];const std::uint8_t folder_index=note_folder[i];
         std::memcpy(name,note_files[i],sizeof(name));std::memcpy(note_files[i],note_files[j],sizeof(name));std::memcpy(note_files[j],name,sizeof(name));
-        std::memcpy(saved_path,note_paths[i],sizeof(saved_path));std::memcpy(note_paths[i],note_paths[j],sizeof(saved_path));std::memcpy(note_paths[j],saved_path,sizeof(saved_path));
+        note_folder[i]=note_folder[j];note_folder[j]=folder_index;
     }
     note_selected=std::min(note_selected,std::max(0,note_count-1));
     note_scroll=0;
@@ -434,7 +434,9 @@ bool save_note() {
 }
 void open_note(int index) {
     if(!sd_ready || index<0 || index>=note_count)return;
-    const char* path=note_paths[index];
+    const char* folders[]={"/sdcard/MCAI-OS/notes","/sdcard/notes","/sdcard/Notes"};
+    char path[112];
+    std::snprintf(path,sizeof(path),"%s/%.39s",folders[note_folder[index]],note_files[index]);
     FILE* f=std::fopen(path,"r");
     if(!f){std::snprintf(store_message,sizeof(store_message),"CANNOT OPEN NOTE");return;}
     note_length=(int)std::fread(note_buffer,1,sizeof(note_buffer)-1,f);
@@ -1770,10 +1772,10 @@ void poll_keyboard() {
         }
         std::uint8_t key=0;
         char ch=decode_key(row,col,shift_held!=caps_lock);
-        // Apostrophe/Esc: apostrophe normally, Escape with Fn.
-        // Del: Delete normally, Backspace with Fn.
+        // Swap the physical apostrophe and Escape functions: Escape normally,
+        // apostrophe with Fn. Del is Delete normally and Backspace with Fn.
         // The four physical arrow keys navigate normally; Fn types their legends.
-        if(row==2&&col==12){if(fn_lock){key=KEY_ESC;ch=0;}else{ch='\'';key=0;}}
+        if(row==2&&col==12){if(fn_lock){ch='\'';key=0;}else{key=KEY_ESC;ch=0;}}
         if(fn_lock){
             if(row==0&&col>=1&&col<=12){ch=0;std::snprintf(last_key_label,sizeof(last_key_label),"F%d",col);}
             else if(row==0&&col==13){key=KEY_BACKSPACE;ch=0;}
