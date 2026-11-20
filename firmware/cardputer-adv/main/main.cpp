@@ -40,6 +40,7 @@
 #include <ctime>
 #include <cstdlib>
 #include <cmath>
+#include <cctype>
 #include <sys/time.h>
 #include <unistd.h>
 
