@@ -105,6 +105,8 @@ esp_ble_scan_params_t ble_scan_params={};
 char calc_buffer[48] = {};
 int calc_length = 0;
 bool calc_showing_result=false;
+bool calc_error=false;
+char calc_error_text[24]={};
 int file_scroll = 0;
 char note_buffer[512] = {};
 int note_length = 0, note_scroll = 0;
@@ -146,7 +148,7 @@ bool dark_theme = true;
 bool ui_dirty=true;
 bool boot_button_was_pressed = false;
 constexpr int kAppsPerPage = 4;
-constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT","STOPWATCH","OS UPDATER"};
+constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT","STOPWATCH","OS UPDATER","WI-FI TESTER","MUSIC PLAYER"};
 constexpr int kAppCount = sizeof(kApps) / sizeof(kApps[0]);
 int launcher_order[kAppCount]={};
 bool launcher_foldered[kAppCount]={};
@@ -354,16 +356,13 @@ void refresh_notes() {
     std::snprintf(store_message,sizeof(store_message),"ADD A NOTE OR SELECT ONE BELOW");
 }
 bool save_note() {
-    if(!sd_ready || !note_filename[0]){std::snprintf(store_message,sizeof(store_message),"NOTE NOT SAVED - NO SD");return false;}
-    FILE* f=std::fopen(note_filename,"w");
-    if(!f){std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;}
+    if(!sd_ready || !note_filename[0] || note_length<0 || note_length>=(int)sizeof(note_buffer)){std::snprintf(store_message,sizeof(store_message),"NOTE NOT SAVED - CHECK SD");return false;}
+    char temp_path[128]={};std::snprintf(temp_path,sizeof(temp_path),"%s.tmp",note_filename);
+    FILE* f=std::fopen(temp_path,"w");if(!f){std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;}
     const size_t written=std::fwrite(note_buffer,1,(size_t)note_length,f);
-    const bool flush_ok=std::fflush(f)==0;
-    const bool close_ok=std::fclose(f)==0;
-    const bool ok=(written==(size_t)note_length)&&flush_ok&&close_ok;
-    if(!ok){std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;}
-    std::snprintf(store_message,sizeof(store_message),"NOTE SAVED");
-    return true;
+    const bool flush_ok=std::fflush(f)==0;const bool sync_ok=flush_ok&&fsync(fileno(f))==0;const bool close_ok=std::fclose(f)==0;
+    if(written!=(size_t)note_length||!sync_ok||!close_ok||rename(temp_path,note_filename)!=0){unlink(temp_path);std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;}
+    std::snprintf(store_message,sizeof(store_message),"NOTE SAVED");return true;
 }
 void open_note(int index) {
     if(!sd_ready || index<0 || index>=note_count)return;
@@ -409,13 +408,11 @@ bool eval_expr(const char*& p,double& out) {
     if(!eval_term(p,out))return false;
     for(;;){while(*p==' ')++p;char op=*p;if(op!='+'&&op!='-')return true;++p;double rhs=0;if(!eval_term(p,rhs))return false;out=op=='+'?out+rhs:out-rhs;}
 }
-void calculate() {
-    const char* p=calc_buffer; double result=0;
-    if(!eval_expr(p,result)){std::snprintf(calc_buffer,sizeof(calc_buffer),"INVALID / DIV0");calc_length=(int)std::strlen(calc_buffer);return;}
-    while(*p==' ')++p;
-    if(*p){std::snprintf(calc_buffer,sizeof(calc_buffer),"INVALID INPUT");calc_length=(int)std::strlen(calc_buffer);return;}
-    std::snprintf(calc_buffer,sizeof(calc_buffer),"%.8g",result);
-    calc_length=(int)std::strlen(calc_buffer);
+bool calculate() {
+    const char* p=calc_buffer;double result=0;
+    if(!eval_expr(p,result)){calc_error=true;std::snprintf(calc_error_text,sizeof(calc_error_text),"INVALID / DIV0");return false;}
+    while(*p==' ')++p;if(*p){calc_error=true;std::snprintf(calc_error_text,sizeof(calc_error_text),"INVALID INPUT");return false;}
+    std::snprintf(calc_buffer,sizeof(calc_buffer),"%.8g",result);calc_length=(int)std::strlen(calc_buffer);calc_error=false;calc_error_text[0]=0;return true;
 }
 void refresh_files() {
     file_count=0; file_selected=0; file_scroll=0;
@@ -832,7 +829,7 @@ bool launch_installed_package(const char* id) {
       std::snprintf(package_subtitle,sizeof(package_subtitle),"%s",subtitle->valuestring);
       package_counter=(int)initial->valuedouble;
       package_increment=(int)increment->valuedouble;
-      package_running=true;active_app=15;
+      package_running=true;active_app=17;
     }
     cJSON_Delete(root);return valid;
 }
@@ -930,6 +927,8 @@ void start_launcher_item(int item) {
     if(item==1){note_editing=false;refresh_notes();}
     if(item==5){refresh_store();}
     if(item==6)last_clock_render_second=-1;
+    if(item==15){wifi_test_done=false;}
+    if(item==16)refresh_music_files();
 }
 void install_store_package() {
     if(!catalogue_loaded||store_count==0)return;
@@ -1026,22 +1025,22 @@ void render_note_page(int x,int y,int visible,std::uint16_t color) {
     }
 }
 void render_app() {
-    const auto white=dark_theme?rgb565(241,247,255):rgb565(22,34,49);
-    const auto muted=dark_theme?rgb565(137,157,181):rgb565(92,111,132);
+    const auto white=dark_theme?rgb565(250,250,250):rgb565(15,15,15);
+    const auto muted=dark_theme?rgb565(180,180,180):rgb565(75,75,75);
     const auto accent=rgb565(126,217,87);
-    const auto bg=dark_theme?rgb565(9,14,25):rgb565(235,241,248);
+    const auto bg=dark_theme?rgb565(28,28,30):rgb565(191,190,191);
     const auto ink=white;
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
-    fill_rect(0,0,kWidth,22,dark_theme?rgb565(16,25,39):rgb565(218,229,239));
+    fill_rect(0,0,kWidth,22,rgb565(18,0,120));
     fill_round_rect(7,4,14,14,4,accent);
     draw_text("M",11,8,1,rgb565(8,18,25));
-    if(active_app==15)draw_text(package_title,28,7,1,ink);
+    if(active_app==17)draw_text(package_title,28,7,1,ink);
     else if(active_app>=0&&active_app<kAppCount)draw_text(kApps[active_app],28,7,1,ink);
     else draw_text("MCAI APP",28,7,1,ink);
     if(caps_lock)draw_text("CAP",174,7,1,accent);
     if(shift_held)draw_text("SHF",194,7,1,accent);
     if(fn_lock)draw_text("FN",218,7,1,accent);
-    fill_rect(0,22,kWidth,1,dark_theme?rgb565(42,57,76):rgb565(197,210,224));
+    fill_rect(0,22,kWidth,1,dark_theme?rgb565(90,90,90):rgb565(130,130,130));
     char line[64];
     switch(active_app) {
     case 0:
@@ -1067,7 +1066,7 @@ void render_app() {
             for(int i=0;i<5;i++){
                 const int ix=note_scroll+i;
                 if(ix>=note_count)break;
-                fill_round_rect(8,47+i*12,224,11,2,ix==note_selected&&notes_action==0?rgb565(37,68,75):bg);
+                fill_round_rect(8,47+i*12,224,11,2,ix==note_selected&&notes_action==0?(dark_theme?rgb565(64,82,54):rgb565(205,231,190)):bg);
                 draw_text(note_files[ix],14,49+i*12,1,ix==note_selected&&notes_action==0?accent:ink);
             }
             if(note_count==0)draw_text("NO SAVED NOTES YET",14,63,1,muted);
@@ -1084,7 +1083,8 @@ void render_app() {
         break;
     case 2:
         draw_text("CALCULATOR",8,27,1,accent);draw_text(calc_buffer,8,49,2,ink);
-        draw_text("P +   M -   X *   D /",8,82,1,muted);draw_text("DIGITS / BRACKETS / DECIMAL",8,96,1,muted);draw_text("ENTER = RESULT  BKSP = DEL",8,111,1,muted);break;
+        if(calc_error)draw_text(calc_error_text,8,70,1,rgb565(255,120,100));
+        draw_text("P +   M -   X *   D /",8,87,1,muted);draw_text("DIGITS / BRACKETS / DECIMAL",8,101,1,muted);draw_text("ENTER = RESULT  BKSP = DEL",8,116,1,muted);break;
     case 3:
         if(bluetooth_screen){
             draw_text("BLUETOOTH LE",8,25,1,accent);
@@ -1214,20 +1214,20 @@ void render_app() {
 }
 
 void render_home() {
-    const auto bg=dark_theme?rgb565(9,14,25):rgb565(235,241,248);
-    const auto panel_bg=dark_theme?rgb565(20,29,45):rgb565(255,255,255);
-    const auto panel_alt=dark_theme?rgb565(27,39,58):rgb565(222,232,242);
-    const auto ink=dark_theme?rgb565(241,247,255):rgb565(22,34,49);
-    const auto muted=dark_theme?rgb565(137,157,181):rgb565(92,111,132);
+    const auto bg=dark_theme?rgb565(28,28,30):rgb565(191,190,191);
+    const auto panel_bg=dark_theme?rgb565(52,52,54):rgb565(245,245,245);
+    const auto panel_alt=dark_theme?rgb565(70,70,72):rgb565(220,220,220);
+    const auto ink=dark_theme?rgb565(250,250,250):rgb565(15,15,15);
+    const auto muted=dark_theme?rgb565(180,180,180):rgb565(75,75,75);
     const auto accent=rgb565(126,217,87);
-    const auto cyan=rgb565(82,210,211);
-    const auto purple=rgb565(168,137,255);
-    const auto selected=dark_theme?rgb565(38,65,66):rgb565(210,239,218);
+    const auto cyan=rgb565(18,0,120);
+    const auto purple=rgb565(191,190,191);
+    const auto selected=dark_theme?rgb565(64,82,54):rgb565(205,231,190);
     if(active_app>=0) { render_app(); return; }
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
 
     // MCAI-OS v2 visual system: compact status bar, app tiles and clear focus.
-    fill_rect(0,0,kWidth,25,dark_theme?rgb565(16,25,39):rgb565(218,229,239));
+    fill_rect(0,0,kWidth,25,rgb565(18,0,120));
     fill_round_rect(7,5,15,15,4,accent);
     draw_text("M",11,9,1,rgb565(8,18,25));
     draw_text("MCAI",28,6,1,ink);
@@ -1236,7 +1236,7 @@ void render_home() {
     draw_text(wifi_connected?"WIFI":"OFF",198,6,1,wifi_connected?cyan:muted);
     if(caps_lock)draw_text("C",224,6,1,accent);
     if(fn_lock)draw_text("F",233,6,1,purple);
-    fill_rect(0,25,kWidth,1,dark_theme?rgb565(42,57,76):rgb565(197,210,224));
+    fill_rect(0,25,kWidth,1,dark_theme?rgb565(90,90,90):rgb565(130,130,130));
 
     if(organizer_mode) {
         draw_text("EDIT HOME",9,31,1,accent);
@@ -1545,8 +1545,10 @@ void poll_keyboard() {
             } else {
                 const int total=launcher_root_count();
                 if(ch=='o'||ch=='O'){organizer_mode=true;organizer_selected=0;}
-                else if(is_up(key)||is_left(key)){if(total>0)selected_app=(selected_app+total-1)%total;play_menu_sound();}
-                else if(is_down(key)||is_right(key)){if(total>0)selected_app=(selected_app+1)%total;play_menu_sound();}
+                else if(is_left(key)){if(total>0&&selected_app%2==1)--selected_app;play_menu_sound();}
+                else if(is_right(key)){if(total>0&&selected_app%2==0&&selected_app+1<total)++selected_app;play_menu_sound();}
+                else if(is_up(key)){if(selected_app>=2)selected_app-=2;play_menu_sound();}
+                else if(is_down(key)){if(selected_app+2<total)selected_app+=2;play_menu_sound();}
                 else if(key==KEY_ENTER){play_menu_sound();start_launcher_item(launcher_root_item(selected_app));}
             }
             ui_dirty=true;
@@ -1582,13 +1584,13 @@ void poll_keyboard() {
             }
         } else if(active_app==2){
             if(key==KEY_ESC)active_app=-1;
-            else if(key==KEY_BACKSPACE||key==KEY_DELETE){if(key==KEY_DELETE){calc_buffer[0]=0;calc_length=0;calc_showing_result=false;}else if(calc_length>0){calc_buffer[--calc_length]=0;calc_showing_result=false;}}
-            else if(key==KEY_ENTER){calculate();calc_showing_result=true;}
+            else if(key==KEY_BACKSPACE||key==KEY_DELETE){if(key==KEY_DELETE){calc_buffer[0]=0;calc_length=0;calc_showing_result=false;}else if(calc_length>0){calc_buffer[--calc_length]=0;calc_showing_result=false;}calc_error=false;calc_error_text[0]=0;}
+            else if(key==KEY_ENTER){calc_showing_result=calculate();}
             else if(calc_length<(int)sizeof(calc_buffer)-2){
                 char op=0;
                 if(ch=='p'||ch=='P')op='+';else if(ch=='m'||ch=='M')op='-';else if(ch=='x'||ch=='X')op='*';else if(ch=='d'||ch=='D')op='/';
                 const bool allowed=(ch>='0'&&ch<='9')||ch=='.'||ch=='('||ch==')'||ch=='%'||op;
-                if(allowed){if(calc_showing_result){calc_buffer[0]=0;calc_length=0;calc_showing_result=false;}calc_buffer[calc_length++]=op?op:ch;calc_buffer[calc_length]=0;}
+                if(allowed){if(calc_showing_result){calc_buffer[0]=0;calc_length=0;calc_showing_result=false;}calc_error=false;calc_error_text[0]=0;calc_buffer[calc_length++]=op?op:ch;calc_buffer[calc_length]=0;}
             }
         } else if(active_app==3){
             if(bluetooth_screen){
@@ -1667,7 +1669,7 @@ void poll_keyboard() {
             if(is_back(key)){if(!ota_running)active_app=-1;}
             else if(key==KEY_ENTER&&!ota_running)start_ota_update();
             else if((ch=='r'||ch=='R')&&!ota_running)start_ota_update();
-        } else if(active_app==15){
+        } else if(active_app==17){
             if(is_back(key)){package_running=false;active_app=package_return_app;}
             else if(key==KEY_ENTER){package_counter=std::min(999999,package_counter+package_increment);}
         } else if(active_app==6){
