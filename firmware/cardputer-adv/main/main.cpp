@@ -1781,7 +1781,12 @@ void poll_keyboard() {
     std::uint8_t status=0;if(keyboard_read(0x02,&status)==ESP_OK&&(status&0x01))keyboard_write(0x02,0x01);
 }} // namespace
 
-extern "C" void app_main(void) {
+// Run the operating system on its own task instead of ESP-IDF's small
+// app_main task. The UI, JSON parser and filesystem drivers need a larger,
+// predictable stack during boot and while apps are running.
+static void mcai_os_task(void* parameter) {
+    (void)parameter;
+
     ESP_LOGI(kTag,"Starting MCAI-OS Cardputer ADV");
     // Set up the ADV backlight before touching the LCD. GPIO38 must not be
     // driven as a plain HIGH output: it is a shared power/backlight rail.
@@ -1837,5 +1842,21 @@ extern "C" void app_main(void) {
         if(old_app!=active_app||old_sel!=selected_app||clock_tick||active_app==7||active_app==11||active_app==13||active_app==5||ui_dirty){render_home();ui_dirty=false;if(active_app==6)last_clock_render_second=clock_second;}
         if(active_app==1&&note_editing&&note_length>0&&note_length%24==0)save_note();
         vTaskDelay(pdMS_TO_TICKS(60));
+    }
+}
+
+extern "C" void app_main(void) {
+    constexpr uint32_t kOsTaskStackBytes = 16384;
+    constexpr UBaseType_t kOsTaskPriority = 5;
+    const BaseType_t result = xTaskCreate(
+        mcai_os_task,
+        "mcai_os",
+        kOsTaskStackBytes,
+        nullptr,
+        kOsTaskPriority,
+        nullptr
+    );
+    if (result != pdPASS) {
+        ESP_LOGE(kTag, "Could not start MCAI-OS task");
     }
 }
