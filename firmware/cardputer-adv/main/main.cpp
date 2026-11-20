@@ -166,6 +166,30 @@ alignas(4) std::uint16_t framebuffer[kWidth * kHeight];
 constexpr std::uint16_t rgb565(std::uint8_t r, std::uint8_t g, std::uint8_t b) {
     return static_cast<std::uint16_t>(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
+bool parse_timer_fields(int& hours,int& minutes,int& seconds) {
+    int a=0,b=0,c=0;
+    const int fields=std::sscanf(timer_input,"%d:%d:%d",&a,&b,&c);
+    if(fields==3){hours=a;minutes=b;seconds=c;}
+    else if(fields==2){hours=0;minutes=a;seconds=b;}
+    else if(fields==1){hours=0;minutes=0;seconds=a;}
+    else return false;
+    return hours>=0&&hours<=99&&minutes>=0&&minutes<60&&seconds>=0&&seconds<60;
+}
+void format_timer_fields(int hours,int minutes,int seconds) {
+    hours=std::max(0,std::min(99,hours));
+    minutes=std::max(0,std::min(59,minutes));
+    seconds=std::max(0,std::min(59,seconds));
+    std::snprintf(timer_input,sizeof(timer_input),"%02d:%02d:%02d",hours,minutes,seconds);
+    timer_seconds=hours*3600+minutes*60+seconds;
+}
+void adjust_timer_field(int delta) {
+    int hours=0,minutes=0,seconds=0;
+    if(!parse_timer_fields(hours,minutes,seconds)){hours=0;minutes=0;seconds=0;}
+    int* fields[]={&hours,&minutes,&seconds};
+    const int maximum=timer_field==0?99:59;
+    *fields[timer_field]=(*fields[timer_field]+delta+maximum+1)%(maximum+1);
+    format_timer_fields(hours,minutes,seconds);
+}
 
 void fill_rect(int x, int y, int w, int h, std::uint16_t color) {
     const int x0 = std::max(0, x), y0 = std::max(0, y);
@@ -274,9 +298,9 @@ void fill_round_rect(int x,int y,int w,int h,int radius,std::uint16_t color) {
 void draw_mcaI_logo_splash() {
     // Match the supplied 240x135 MCAI-OS boot artwork, leaving a clear
     // green strip at the bottom for the startup instruction.
-    const auto green=rgb565(126,217,87), black=rgb565(0,0,0);
+    const auto green=rgb565(220,220,220), black=rgb565(0,0,0);
     const auto white=rgb565(254,254,254), grey=rgb565(115,115,115);
-    const auto frame=rgb565(191,190,191), navy=rgb565(18,0,120);
+    const auto frame=rgb565(120,120,120), navy=rgb565(0,0,0);
     std::fill(std::begin(framebuffer),std::end(framebuffer),green);
     const char keys[]="MCAI";
     for(int i=0;i<4;i++) {
@@ -676,11 +700,21 @@ bool start_wifi_connect(const char* ssid,const char* password) {
 }
 bool connect_wifi_from_sd() {
     if(wifi_driver_ready||wifi_started){
+        // A valid DHCP address is the reliable sign that the station is online.
+        // Do not require a separate AP-info query to succeed first.
+        esp_netif_ip_info_t ip{};
+        if(wifi_sta_netif&&esp_netif_get_ip_info(wifi_sta_netif,&ip)==ESP_OK&&ip.ip.addr!=0){
+            std::snprintf(wifi_ip_text,sizeof(wifi_ip_text),IPSTR,IP2STR(&ip.ip));
+            wifi_connected=true;wifi_started=true;start_time_sync();return true;
+        }
         wifi_ap_record_t current{};
         if(esp_wifi_sta_get_ap_info(&current)==ESP_OK){
-            esp_netif_ip_info_t ip{};
-            if(wifi_sta_netif&&esp_netif_get_ip_info(wifi_sta_netif,&ip)==ESP_OK&&ip.ip.addr!=0){
-                std::snprintf(wifi_ip_text,sizeof(wifi_ip_text),IPSTR,IP2STR(&ip.ip));wifi_connected=true;return true;
+            for(int wait=0;wait<10;wait++){
+                vTaskDelay(pdMS_TO_TICKS(250));
+                if(wifi_sta_netif&&esp_netif_get_ip_info(wifi_sta_netif,&ip)==ESP_OK&&ip.ip.addr!=0){
+                    std::snprintf(wifi_ip_text,sizeof(wifi_ip_text),IPSTR,IP2STR(&ip.ip));
+                    wifi_connected=true;wifi_started=true;start_time_sync();return true;
+                }
             }
         }
         wifi_connected=false;
@@ -707,6 +741,10 @@ void ota_update_task(void*) {
     http_cfg.url="https://github.com/betabeeswax/MCAI-OS/releases/download/v0.1.0-alpha/cmair-os-cardputer-adv-app.bin";
     http_cfg.crt_bundle_attach=esp_crt_bundle_attach;
     http_cfg.timeout_ms=30000;
+    if(std::time(nullptr)<1577836800){
+        std::snprintf(ota_message,sizeof(ota_message),"TIME NOT SYNCED - TRY AGAIN");
+        ota_running=false;ui_dirty=true;vTaskDelete(nullptr);return;
+    }
     esp_https_ota_config_t ota_cfg={};
     ota_cfg.http_config=&http_cfg;
     const esp_err_t err=esp_https_ota(&ota_cfg);
@@ -989,16 +1027,39 @@ void install_store_package() {
     std::snprintf(store_message,sizeof(store_message),"INSTALLED - ENTER TO OPEN");
 }
 void seed_store() { /* Store entries are fetched from the official GitHub catalogue. */ }
+bool wifi_http_probe(const char* url,int& status,esp_err_t& result) {
+    esp_http_client_config_t cfg={};
+    cfg.url=url;cfg.timeout_ms=12000;cfg.crt_bundle_attach=esp_crt_bundle_attach;
+    esp_http_client_handle_t client=esp_http_client_init(&cfg);
+    if(!client){result=ESP_FAIL;status=0;return false;}
+    result=esp_http_client_perform(client);
+    status=esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    return result==ESP_OK&&(status==200||status==204);
+}
 void wifi_test_task(void*) {
     wifi_test_done=false;wifi_test_online=false;wifi_test_http=0;
-    if(!connect_wifi_from_sd()) {wifi_test_running=false;wifi_test_done=true;ui_dirty=true;vTaskDelete(nullptr);return;}
+    std::snprintf(wifi_test_error,sizeof(wifi_test_error),"CHECKING");
+    if(!connect_wifi_from_sd()) {
+        std::snprintf(wifi_test_error,sizeof(wifi_test_error),"NO IP / WIFI SETTINGS");
+        wifi_test_running=false;wifi_test_done=true;ui_dirty=true;vTaskDelete(nullptr);return;
+    }
     wifi_ap_record_t ap{};if(esp_wifi_sta_get_ap_info(&ap)==ESP_OK)wifi_test_rssi=ap.rssi;
     std::snprintf(wifi_test_ip,sizeof(wifi_test_ip),"%s",wifi_ip_text);
-    esp_http_client_config_t cfg={};cfg.url="https://connectivitycheck.gstatic.com/generate_204";
-    cfg.timeout_ms=12000;cfg.crt_bundle_attach=esp_crt_bundle_attach;
-    esp_http_client_handle_t client=esp_http_client_init(&cfg);
-    if(client){const esp_err_t e=esp_http_client_perform(client);wifi_test_http=esp_http_client_get_status_code(client);
-        wifi_test_online=e==ESP_OK&&(wifi_test_http==204||wifi_test_http==200);esp_http_client_cleanup(client);}
+    start_time_sync();
+    for(int wait=0;wait<20&&std::time(nullptr)<1577836800;wait++)vTaskDelay(pdMS_TO_TICKS(500));
+    esp_err_t result=ESP_FAIL;int status=0;
+    wifi_test_online=wifi_http_probe("https://connectivitycheck.gstatic.com/generate_204",status,result);
+    wifi_test_http=status;
+    if(!wifi_test_online){
+        int fallback_status=0;esp_err_t fallback_result=ESP_FAIL;
+        wifi_test_online=wifi_http_probe("https://www.google.com/generate_204",fallback_status,fallback_result);
+        if(wifi_test_online){wifi_test_http=fallback_status;result=fallback_result;}
+        else if(fallback_status){wifi_test_http=fallback_status;result=fallback_result;}
+    }
+    if(wifi_test_online)std::snprintf(wifi_test_error,sizeof(wifi_test_error),"HTTPS OK");
+    else if(wifi_test_http)std::snprintf(wifi_test_error,sizeof(wifi_test_error),"HTTP %d",wifi_test_http);
+    else std::snprintf(wifi_test_error,sizeof(wifi_test_error),"%.25s",esp_err_to_name(result));
     wifi_test_running=false;wifi_test_done=true;ui_dirty=true;vTaskDelete(nullptr);
 }
 void start_wifi_test() {
@@ -1006,6 +1067,7 @@ void start_wifi_test() {
     wifi_test_running=true;
     wifi_test_done=false;
     wifi_test_online=false;
+    std::snprintf(wifi_test_error,sizeof(wifi_test_error),"CHECKING");
     if(xTaskCreate(wifi_test_task,"wifi-test",6144,nullptr,4,nullptr)!=pdPASS){wifi_test_running=false;wifi_test_done=true;std::snprintf(store_message,sizeof(store_message),"WIFI TEST TASK FAILED");}
     ui_dirty=true;
 }
@@ -1102,12 +1164,12 @@ void render_app() {
     const auto white=dark_theme?rgb565(250,250,250):rgb565(15,15,15);
     const auto muted=dark_theme?rgb565(180,180,180):rgb565(75,75,75);
     const auto accent=rgb565(126,217,87);
-    const auto bg=dark_theme?rgb565(28,28,30):rgb565(191,190,191);
+    const auto bg=dark_theme?rgb565(0,0,0):rgb565(191,190,191);
     const auto ink=white;
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
     fill_rect(0,0,kWidth,22,rgb565(18,0,120));
     fill_round_rect(7,4,14,14,4,accent);
-    draw_text("M",11,8,1,rgb565(8,18,25));
+    draw_text("M",11,8,1,rgb565(0,0,0));
     if(active_app==17)draw_text(package_title,28,7,1,ink);
     else if(active_app>=0&&active_app<kAppCount)draw_text(kApps[active_app],28,7,1,ink);
     else draw_text("MCAI APP",28,7,1,ink);
@@ -1140,7 +1202,7 @@ void render_app() {
             for(int i=0;i<5;i++){
                 const int ix=note_scroll+i;
                 if(ix>=note_count)break;
-                fill_round_rect(8,47+i*12,224,11,2,ix==note_selected&&notes_action==0?(dark_theme?rgb565(64,82,54):rgb565(205,231,190)):bg);
+                fill_round_rect(8,47+i*12,224,11,2,ix==note_selected&&notes_action==0?(dark_theme?rgb565(64,64,64):rgb565(205,205,205)):bg);
                 draw_text(note_files[ix],14,49+i*12,1,ix==note_selected&&notes_action==0?accent:ink);
             }
             if(note_count==0)draw_text("NO SAVED NOTES YET",14,63,1,muted);
@@ -1157,7 +1219,7 @@ void render_app() {
         break;
     case 2:
         draw_text("CALCULATOR",8,27,1,accent);draw_text(calc_buffer,8,49,2,ink);
-        if(calc_error)draw_text(calc_error_text,8,70,1,rgb565(255,120,100));
+        if(calc_error)draw_text(calc_error_text,8,70,1,rgb565(190,190,190));
         draw_text("P +   M -   X *   D /",8,87,1,muted);draw_text("DIGITS / BRACKETS / DECIMAL",8,101,1,muted);draw_text("ENTER = RESULT  BKSP = DEL",8,116,1,muted);break;
     case 3:
         if(bluetooth_screen){
@@ -1196,7 +1258,7 @@ void render_app() {
                 else if(i==1)std::snprintf(item,sizeof(item),"THEME       %s",dark_theme?"DARK":"LIGHT");
                 else if(i==4)std::snprintf(item,sizeof(item),"SOUND       %s",sound_enabled?"ON":"OFF");
                 else std::snprintf(item,sizeof(item),"%s",rows[i]);
-                fill_rect(6,59+i*11,228,10,i==settings_selection?rgb565(37,68,75):bg);
+                fill_rect(6,59+i*11,228,10,i==settings_selection?rgb565(70,70,70):bg);
                 draw_text(item,12,60+i*11,1,i==settings_selection?accent:ink);
             }
             draw_text("UP/DN SELECT  LEFT/RIGHT CHANGE",8,117,1,muted);
@@ -1265,7 +1327,7 @@ void render_app() {
         std::snprintf(line,sizeof(line),"UPTIME %lu SEC",(unsigned long)(esp_timer_get_time()/1000000));draw_text(line,8,84,1,ink);break;
     case 14:
         draw_text("SYSTEM UPDATER",8,28,1,accent);
-        fill_round_rect(8,42,224,37,5,rgb565(25,43,62));
+        fill_round_rect(8,42,224,37,5,rgb565(32,32,32));
         draw_text(ota_running?"UPDATING MCAI-OS":"CHECK FOR OS UPDATE",17,51,1,ink);
         draw_text(ota_message,8,91,1,muted);
         draw_text(ota_running?"PLEASE KEEP DEVICE POWERED":"ENTER: CHECK / INSTALL",8,111,1,accent);
@@ -1280,7 +1342,7 @@ void render_app() {
         if(!game_started){
             draw_text("GAME LIBRARY",8,26,1,accent);
             fill_round_rect(8,39,224,38,5,rgb565(25,43,62));
-            fill_round_rect(13,44,30,28,4,rgb565(87,231,190));
+            fill_round_rect(13,44,30,28,4,rgb565(190,190,190));
             draw_text("S",23,52,2,bg);
             draw_text("SNAKE",51,45,1,ink);
             draw_text("ARCADE CLASSIC",51,59,1,muted);
@@ -1291,7 +1353,7 @@ void render_app() {
             draw_text("SNAKE",8,25,1,accent);
             if(game_over)draw_text("GAME OVER - ENTER",100,25,1,accent);
             for(int i=0;i<snake_len;i++)fill_rect(16+snake_x[i]*9,38+snake_y[i]*8,7,6,accent);
-            fill_rect(16+food_x*9,38+food_y*8,7,6,rgb565(255,100,100));
+            fill_rect(16+food_x*9,38+food_y*8,7,6,rgb565(180,180,180));
             std::snprintf(line,sizeof(line),"SCORE %d",game_score);draw_text(line,8,116,1,ink);
             draw_text("ARROWS MOVE  ESC GAMES",8,128,1,muted);
         }
@@ -1305,8 +1367,8 @@ void render_app() {
 
 void render_home() {
     const auto bg=dark_theme?rgb565(28,28,30):rgb565(191,190,191);
-    const auto panel_bg=dark_theme?rgb565(52,52,54):rgb565(245,245,245);
-    const auto panel_alt=dark_theme?rgb565(70,70,72):rgb565(220,220,220);
+    const auto panel_bg=dark_theme?rgb565(24,24,24):rgb565(245,245,245);
+    const auto panel_alt=dark_theme?rgb565(48,48,48):rgb565(220,220,220);
     const auto ink=dark_theme?rgb565(250,250,250):rgb565(15,15,15);
     const auto muted=dark_theme?rgb565(180,180,180):rgb565(75,75,75);
     const auto accent=rgb565(126,217,87);
