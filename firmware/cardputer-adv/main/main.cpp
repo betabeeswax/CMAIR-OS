@@ -160,6 +160,7 @@ char music_files[16][64]={}; int music_count=0,music_selected=0,music_scroll=0;
 volatile bool music_playing=false,music_stop_requested=false;
 bool wifi_test_running=false,wifi_test_done=false,wifi_test_online=false;
 int wifi_test_rssi=0,wifi_test_http=0; char wifi_test_ip[16]="0.0.0.0";
+char wifi_test_error[32]="NOT TESTED";
 char installed_package_ids[16][64]={};
 char installed_package_titles[16][64]={};
 alignas(4) std::uint16_t framebuffer[kWidth * kHeight];
