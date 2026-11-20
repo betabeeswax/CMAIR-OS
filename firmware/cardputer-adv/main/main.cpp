@@ -424,7 +424,12 @@ bool eval_expr(const char*& p,double& out) {
 bool calculate() {
     const char* p=calc_buffer;double result=0;
     if(!eval_expr(p,result)){calc_error=true;std::snprintf(calc_error_text,sizeof(calc_error_text),"INVALID / DIV0");return false;}
-    while(*p==' ')++p;if(*p){calc_error=true;std::snprintf(calc_error_text,sizeof(calc_error_text),"INVALID INPUT");return false;}
+    while(*p==' ') ++p;
+    if(*p){
+        calc_error=true;
+        std::snprintf(calc_error_text,sizeof(calc_error_text),"INVALID INPUT");
+        return false;
+    }
     std::snprintf(calc_buffer,sizeof(calc_buffer),"%.8g",result);calc_length=(int)std::strlen(calc_buffer);calc_error=false;calc_error_text[0]=0;return true;
 }
 void refresh_files() {
@@ -997,7 +1002,10 @@ void wifi_test_task(void*) {
     wifi_test_running=false;wifi_test_done=true;ui_dirty=true;vTaskDelete(nullptr);
 }
 void start_wifi_test() {
-    if(wifi_test_running)return;wifi_test_running=true;wifi_test_done=false;wifi_test_online=false;
+    if(wifi_test_running) return;
+    wifi_test_running=true;
+    wifi_test_done=false;
+    wifi_test_online=false;
     if(xTaskCreate(wifi_test_task,"wifi-test",6144,nullptr,4,nullptr)!=pdPASS){wifi_test_running=false;wifi_test_done=true;std::snprintf(store_message,sizeof(store_message),"WIFI TEST TASK FAILED");}
     ui_dirty=true;
 }
@@ -1263,7 +1271,7 @@ void render_app() {
         draw_text(ota_running?"PLEASE KEEP DEVICE POWERED":"ENTER: CHECK / INSTALL",8,111,1,accent);
         draw_text("ESC: BACK",8,124,1,muted);
         break;
-    case 15: {
+    case 17: {
         char count[32];std::snprintf(count,sizeof(count),"%d",package_counter);
         draw_text(package_subtitle,8,30,1,muted);draw_text(count,8,55,3,accent);
         draw_text("ENTER: +1",8,94,1,ink);draw_text("BACKSPACE: STORE",8,111,1,muted);break;
