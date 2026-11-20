@@ -160,6 +160,8 @@ std::int64_t stopwatch_started_us=0, stopwatch_elapsed_us=0;
 bool timer_running = false;
 std::int64_t timer_end_us = 0;
 bool game_started = false;
+int game_mode=0, game_menu_selected=0, game_answer=-1, game_target=5, game_a=2, game_b=3;
+char game_feedback[32]="CHOOSE A GAME";
 int snake_x[48] = {}, snake_y[48] = {}, snake_len = 3, snake_dx = 1, snake_dy = 0;
 int food_x = 12, food_y = 4, game_score = 0;
 std::int64_t game_tick_us = 0;
@@ -184,6 +186,9 @@ std::int16_t music_mp3_output[512]{};
 bool wifi_test_running=false,wifi_test_done=false,wifi_test_online=false;
 int wifi_test_rssi=0,wifi_test_http=0; char wifi_test_ip[16]="0.0.0.0";
 char wifi_test_error[32]="NOT TESTED";
+float wifi_test_mbps=0.0f;
+volatile size_t wifi_speed_bytes=0;
+esp_err_t wifi_speed_event(esp_http_client_event_t* evt){if(evt->event_id==HTTP_EVENT_ON_DATA&&evt->data_len>0)wifi_speed_bytes+=(size_t)evt->data_len;return ESP_OK;}
 char installed_package_ids[16][64]={};
 char installed_package_titles[16][64]={};
 alignas(4) std::uint16_t framebuffer[kWidth * kHeight];
@@ -830,7 +835,7 @@ bool start_wifi_connect(const char* ssid,const char* password) {
     std::snprintf(wifi_task_password,sizeof(wifi_task_password),"%.64s",password?password:"");
     wifi_connecting=true;
     std::snprintf(store_message,sizeof(store_message),"CONNECTING TO WIFI");
-    if(xTaskCreate(wifi_connect_task,"wifi-connect",4096,nullptr,4,nullptr)!=pdPASS){wifi_connecting=false;std::snprintf(store_message,sizeof(store_message),"WIFI TASK FAILED");return false;}
+    if(xTaskCreate(wifi_connect_task,"wifi-connect",4096,nullptr,3,nullptr)!=pdPASS){wifi_connecting=false;std::snprintf(store_message,sizeof(store_message),"WIFI TASK FAILED");return false;}
     return true;
 }
 bool connect_wifi_from_sd() {
@@ -881,7 +886,7 @@ void ota_update_task(void*) {
     esp_http_client_config_t http_cfg={};
     http_cfg.url="https://github.com/betabeeswax/MCAI-OS/releases/download/v0.1.0-alpha/MCAI-OS-app.bin";
     http_cfg.crt_bundle_attach=esp_crt_bundle_attach;
-    http_cfg.timeout_ms=45000;
+    http_cfg.timeout_ms=90000;http_cfg.keep_alive_enable=false;http_cfg.disable_auto_redirect=false;http_cfg.max_redirection_count=8;http_cfg.buffer_size=2048;http_cfg.buffer_size_tx=1024;
     esp_https_ota_config_t ota_cfg={};
     ota_cfg.http_config=&http_cfg;
     const esp_err_t err=esp_https_ota(&ota_cfg);
@@ -901,7 +906,7 @@ void start_ota_update() {
     ota_running=true;
     std::snprintf(ota_message,sizeof(ota_message),"STARTING UPDATE...");
     ui_dirty=true;
-    if(xTaskCreate(ota_update_task,"mcai_ota",8192,nullptr,5,nullptr)!=pdPASS) {
+    if(xTaskCreate(ota_update_task,"mcai_ota",6144,nullptr,4,nullptr)!=pdPASS) {
         ota_running=false;
         std::snprintf(ota_message,sizeof(ota_message),"UPDATE TASK FAILED");
         ui_dirty=true;
@@ -923,8 +928,8 @@ bool load_store_catalogue() {
     }
     esp_http_client_config_t cfg={};
     cfg.url="https://raw.githubusercontent.com/betabeeswax/MCAI-OS-APPS/main/catalogue.json";
-    cfg.event_handler=catalogue_http_event;cfg.timeout_ms=30000;cfg.buffer_size=4096;
-    cfg.crt_bundle_attach=esp_crt_bundle_attach;cfg.keep_alive_enable=false;
+    cfg.event_handler=catalogue_http_event;cfg.timeout_ms=45000;cfg.buffer_size=2048;cfg.buffer_size_tx=1024;
+    cfg.crt_bundle_attach=esp_crt_bundle_attach;cfg.keep_alive_enable=false;cfg.disable_auto_redirect=false;cfg.max_redirection_count=5;
     esp_http_client_handle_t client=esp_http_client_init(&cfg);
     if(!client){std::snprintf(store_message,sizeof(store_message),"HTTP INIT FAILED");return false;}
     esp_err_t result=esp_http_client_perform(client);
@@ -975,7 +980,7 @@ void refresh_store() {
     if(store_loading)return;
     store_loading=true;store_count=0;store_selected=0;store_scroll=0;catalogue_loaded=false;
     std::snprintf(store_message,sizeof(store_message),"LOADING APP CATALOGUE");ui_dirty=true;
-    if(xTaskCreate(refresh_store_task,"store-refresh",6144,nullptr,4,nullptr)!=pdPASS){
+    if(xTaskCreate(refresh_store_task,"store-refresh",5120,nullptr,3,nullptr)!=pdPASS){
         store_loading=false;std::snprintf(store_message,sizeof(store_message),"STORE TASK FAILED");ui_dirty=true;
     }
 }
@@ -1143,7 +1148,7 @@ void install_store_package() {
     if(package_installed(store_ids[store_selected])){std::snprintf(store_message,sizeof(store_message),"INSTALLED - ENTER TO OPEN");return;}
     catalogue_length=0;catalogue_buffer[0]=0;
     esp_http_client_config_t cfg={};cfg.url=store_urls[store_selected];cfg.event_handler=catalogue_http_event;
-    cfg.timeout_ms=20000;cfg.buffer_size=1024;cfg.crt_bundle_attach=esp_crt_bundle_attach;
+    cfg.timeout_ms=45000;cfg.buffer_size=1024;cfg.buffer_size_tx=1024;cfg.crt_bundle_attach=esp_crt_bundle_attach;cfg.keep_alive_enable=false;cfg.disable_auto_redirect=false;cfg.max_redirection_count=5;
     esp_http_client_handle_t client=esp_http_client_init(&cfg);
     if(!client){std::snprintf(store_message,sizeof(store_message),"PACKAGE HTTP INIT FAIL");return;}
     esp_err_t result=esp_http_client_perform(client);int status=esp_http_client_get_status_code(client);esp_http_client_cleanup(client);
@@ -1175,7 +1180,7 @@ void install_store_package() {
 void seed_store() { /* Store entries are fetched from the official GitHub catalogue. */ }
 bool wifi_http_probe(const char* url,int& status,esp_err_t& result) {
     esp_http_client_config_t cfg={};
-    cfg.url=url;cfg.timeout_ms=12000;cfg.crt_bundle_attach=esp_crt_bundle_attach;
+    cfg.url=url;cfg.timeout_ms=20000;cfg.crt_bundle_attach=esp_crt_bundle_attach;cfg.keep_alive_enable=false;cfg.disable_auto_redirect=false;cfg.max_redirection_count=5;
     esp_http_client_handle_t client=esp_http_client_init(&cfg);
     if(!client){result=ESP_FAIL;status=0;return false;}
     result=esp_http_client_perform(client);
@@ -1203,8 +1208,25 @@ void wifi_test_task(void*) {
         if(wifi_test_online){wifi_test_http=fallback_status;result=fallback_result;}
         else if(fallback_status){wifi_test_http=fallback_status;result=fallback_result;}
     }
-    if(wifi_test_online)std::snprintf(wifi_test_error,sizeof(wifi_test_error),"HTTPS OK");
-    else if(wifi_test_http)std::snprintf(wifi_test_error,sizeof(wifi_test_error),"HTTP %d",wifi_test_http);
+    if(wifi_test_online){
+        std::snprintf(wifi_test_error,sizeof(wifi_test_error),"INTERNET OK");
+        wifi_speed_bytes=0;
+        esp_http_client_config_t speed_cfg={};
+        speed_cfg.url="https://speed.cloudflare.com/__down?bytes=100000";
+        speed_cfg.timeout_ms=25000;speed_cfg.crt_bundle_attach=esp_crt_bundle_attach;
+        speed_cfg.event_handler=wifi_speed_event;speed_cfg.keep_alive_enable=false;
+        esp_http_client_handle_t speed_client=esp_http_client_init(&speed_cfg);
+        if(speed_client){
+            const std::int64_t start=esp_timer_get_time();
+            const esp_err_t speed_err=esp_http_client_perform(speed_client);
+            const std::int64_t elapsed=esp_timer_get_time()-start;
+            const int speed_status=esp_http_client_get_status_code(speed_client);
+            esp_http_client_cleanup(speed_client);
+            if(speed_err==ESP_OK&&speed_status==200&&elapsed>0&&wifi_speed_bytes>0)
+                wifi_test_mbps=((float)wifi_speed_bytes*8.0f)/(float)elapsed;
+            else std::snprintf(wifi_test_error,sizeof(wifi_test_error),"INTERNET OK / SPEED N/A");
+        }
+    } else if(wifi_test_http)std::snprintf(wifi_test_error,sizeof(wifi_test_error),"HTTP %d",wifi_test_http);
     else std::snprintf(wifi_test_error,sizeof(wifi_test_error),"%.25s",esp_err_to_name(result));
     wifi_test_running=false;wifi_test_done=true;ui_dirty=true;vTaskDelete(nullptr);
 }
@@ -1212,9 +1234,9 @@ void start_wifi_test() {
     if(wifi_test_running) return;
     wifi_test_running=true;
     wifi_test_done=false;
-    wifi_test_online=false;
+    wifi_test_online=false;wifi_test_mbps=0.0f;
     std::snprintf(wifi_test_error,sizeof(wifi_test_error),"CHECKING");
-    if(xTaskCreate(wifi_test_task,"wifi-test",6144,nullptr,4,nullptr)!=pdPASS){wifi_test_running=false;wifi_test_done=true;std::snprintf(store_message,sizeof(store_message),"WIFI TEST TASK FAILED");}
+    if(xTaskCreate(wifi_test_task,"wifi-test",5120,nullptr,3,nullptr)!=pdPASS){wifi_test_running=false;wifi_test_done=true;std::snprintf(store_message,sizeof(store_message),"WIFI TEST TASK FAILED");}
     ui_dirty=true;
 }
 bool music_name_is_mp3(const char* name) {
