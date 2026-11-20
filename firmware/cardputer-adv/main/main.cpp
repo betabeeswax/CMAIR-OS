@@ -73,7 +73,7 @@ bool is_up(std::uint8_t k){return k==KEY_UP;}
 bool is_down(std::uint8_t k){return k==KEY_DOWN;}
 bool is_left(std::uint8_t k){return k==KEY_LEFT;}
 bool is_right(std::uint8_t k){return k==KEY_RIGHT;}
-bool is_back(std::uint8_t k){return k==KEY_ESC||k==KEY_DELETE;}
+bool is_back(std::uint8_t k){return k==KEY_ESC;}
 constexpr char kSdMountPoint[] = "/sdcard";
 
 esp_lcd_panel_handle_t panel = nullptr;
@@ -1877,13 +1877,13 @@ void poll_keyboard() {
                 if(is_back(key)||(key==KEY_ENTER&&fn_lock)){save_note();note_editing=false;refresh_notes();notes_action=0;}
                 else if(is_up(key)){note_scroll=std::max(0,note_scroll-1);}
                 else if(is_down(key)){note_scroll=std::min(std::max(0,note_visual_line_count()-6),note_scroll+1);}
-                else if(key==KEY_BACKSPACE){if(note_length>0){--note_length;note_buffer[note_length]=0;save_note();}}
+                else if(key==KEY_BACKSPACE||key==KEY_DELETE){if(note_length>0){--note_length;note_buffer[note_length]=0;save_note();}}
                 else if(key==KEY_ENTER&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]='\n';note_buffer[note_length]=0;note_scroll=std::max(0,note_visual_line_count()-6);save_note();}
                 else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;note_scroll=std::max(0,note_visual_line_count()-6);save_note();}
             }
         } else if(active_app==2){
             if(is_back(key))active_app=-1;
-            else if(key==KEY_BACKSPACE){if(calc_length>0){calc_buffer[--calc_length]=0;calc_showing_result=false;}calc_error=false;calc_error_text[0]=0;}
+            else if(key==KEY_BACKSPACE||key==KEY_DELETE){if(calc_length>0){calc_buffer[--calc_length]=0;calc_showing_result=false;}calc_error=false;calc_error_text[0]=0;}
             else if(key==KEY_ENTER){calc_showing_result=calculate();}
             else if(calc_length<(int)sizeof(calc_buffer)-2){
                 char op=0;
@@ -1915,7 +1915,7 @@ void poll_keyboard() {
                             wifi_setup_step=0;
                         } else wifi_setup_step=4;
                     }
-                } else if(key==KEY_BACKSPACE){
+                } else if(key==KEY_BACKSPACE||key==KEY_DELETE){
                     char* field=(wifi_setup_step==1)?wifi_ssid_input:wifi_password_input;
                     size_t n=std::strlen(field);if(n)field[n-1]=0;
                 } else if(key==KEY_ENTER){
@@ -2002,7 +2002,7 @@ void poll_keyboard() {
             else if(!timer_running&&is_right(key))timer_field=(timer_field+1)%3;
             else if(!timer_running&&is_up(key))adjust_timer_field(1);
             else if(!timer_running&&is_down(key))adjust_timer_field(-1);
-            else if(!timer_running&&key==KEY_BACKSPACE){size_t n=std::strlen(timer_input);if(n)timer_input[n-1]=0;}
+            else if(!timer_running&&(key==KEY_BACKSPACE||key==KEY_DELETE)){size_t n=std::strlen(timer_input);if(n)timer_input[n-1]=0;}
             else if(!timer_running&&(ch=='c'||ch=='C'))timer_input[0]=0;
             else if(!timer_running&&(ch=='r'||ch=='R')){timer_field=2;format_timer_fields(0,1,0);}
             else if(!timer_running&&((ch>='0'&&ch<='9')||ch==':')&&std::strlen(timer_input)<8){size_t n=std::strlen(timer_input);timer_input[n]=ch;timer_input[n+1]=0;}
