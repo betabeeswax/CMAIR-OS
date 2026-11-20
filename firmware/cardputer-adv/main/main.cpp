@@ -1378,7 +1378,7 @@ void render_app() {
                 for(int i=0;i<5;i++){int ix=wifi_network_scroll+i;if(ix>=wifi_network_count)break;char row[40];std::snprintf(row,sizeof(row),"%c %.20s %ddB",ix==wifi_network_selected?'>':' ',wifi_networks[ix],wifi_network_rssi[ix]);draw_text(row,8,43+i*12,1,ix==wifi_network_selected?accent:ink);}
                 if(wifi_network_count==0)draw_text("NO NETWORKS - PRESS R",8,60,1,ink);
                 draw_text(store_message,8,101,1,muted);
-                draw_text("UP/DN ENTER  R RESCAN",8,114,1,muted);draw_text("M MANUAL  ESC BACK",8,126,1,muted);
+                draw_text("UP/DN ENTER/RIGHT SELECT",8,114,1,muted);draw_text("M MANUAL  R RESCAN  ESC BACK",8,126,1,muted);
             } else {
                 const bool entering_ssid=(wifi_setup_step==1);
                 draw_text(entering_ssid?"WIFI NETWORK NAME":"WIFI PASSWORD",8,29,1,accent);
@@ -1906,7 +1906,7 @@ void poll_keyboard() {
                     else if(ch=='r'||ch=='R'){scan_wifi_networks();}
                     else if(is_back(key)){wifi_setup_step=0;}
                     else if(ch=='m'||ch=='M'){wifi_ssid_input[0]=0;wifi_password_input[0]=0;wifi_setup_step=1;}
-                    else if(key==KEY_ENTER&&wifi_network_count>0&&wifi_network_selected>=0&&wifi_network_selected<wifi_network_count){
+                    else if((key==KEY_ENTER||is_right(key)||ch==' ')&&wifi_network_count>0&&wifi_network_selected>=0&&wifi_network_selected<wifi_network_count){
                         std::snprintf(wifi_ssid_input,sizeof(wifi_ssid_input),"%s",wifi_networks[wifi_network_selected]);
                         wifi_password_input[0]=0;
                         if(wifi_network_auth[wifi_network_selected]==WIFI_AUTH_OPEN){
