@@ -165,7 +165,7 @@ volatile bool music_playing=false,music_stop_requested=false;
 mp3dec_t music_mp3_decoder{};
 std::uint8_t music_mp3_input[8192]{};
 mp3d_sample_t music_mp3_pcm[MINIMP3_MAX_SAMPLES_PER_FRAME]{};
-std::int16_t music_mp3_output[4096]{};
+std::int16_t music_mp3_output[512]{};
 bool wifi_test_running=false,wifi_test_done=false,wifi_test_online=false;
 int wifi_test_rssi=0,wifi_test_http=0; char wifi_test_ip[16]="0.0.0.0";
 char wifi_test_error[32]="NOT TESTED";
