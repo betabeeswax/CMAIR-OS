@@ -1439,7 +1439,7 @@ void render_app() {
         } else {
             const char* tail=std::strlen(current_dir)>36?current_dir+std::strlen(current_dir)-36:current_dir;
             draw_text(tail,8,25,1,accent);
-            for(int i=0;i<5;i++){int ix=file_scroll+i;if(ix>=file_count)break;std::snprintf(line,sizeof(line),"%c %.32s",file_is_dir[ix]?'>':' ',file_names[ix]);draw_text(line,8,42+i*14,1,ix==file_selected?accent:ink);}
+            for(int i=0;i<5;i++){int ix=file_scroll+i;if(ix>=file_count)break;const bool selected=ix==file_selected;if(selected)fill_round_rect(5,39+i*14,230,13,2,dark_theme?rgb565(65,65,65):rgb565(205,205,205));std::snprintf(line,sizeof(line),"%c %.32s",file_is_dir[ix]?'>':' ',file_names[ix]);draw_text(line,8,42+i*14,1,selected?(dark_theme?rgb565(255,255,255):rgb565(0,0,0)):ink);}
             draw_text("UP/DN MOVE  ENTER OPEN",8,112,1,muted);draw_text("BKSP BACK",8,124,1,muted);
         }
         break;
@@ -1458,7 +1458,7 @@ void render_app() {
             if(note_count==0)draw_text("NO SAVED NOTES YET",14,63,1,muted);
             char note_count_label[24];std::snprintf(note_count_label,sizeof(note_count_label),"%d NOTES",note_count);draw_text(note_count_label,8,111,1,muted);
             draw_text("UP/DN MOVE  ENTER OPEN",104,111,1,muted);
-            draw_text("N: NEW  BKSP: BACK",8,124,1,muted);
+            draw_text("N: NEW  D: DELETE  ESC: BACK",8,124,1,muted);
         } else {
             const char* note_title=std::strrchr(note_filename,'/');
             draw_text(note_title?note_title+1:note_filename,8,25,1,accent);
@@ -1540,6 +1540,7 @@ void render_app() {
         std::snprintf(line,sizeof(line),"IP %.15s",wifi_test_ip);draw_text(line,8,80,1,muted);
         std::snprintf(line,sizeof(line),"SIGNAL %d dBm",wifi_test_rssi);draw_text(line,8,94,1,muted);
         std::snprintf(line,sizeof(line),"HTTP %d",wifi_test_http);draw_text(line,8,108,1,muted);
+        if(wifi_test_online){std::snprintf(line,sizeof(line),"%.2f MBPS",wifi_test_mbps);draw_text(line,150,108,1,accent);}
         draw_text("ENTER TEST  R RETEST  BKSP BACK",8,124,1,muted);break;
     case 16:
         draw_text("MUSIC / MP3 + WAV",8,27,1,accent);
@@ -1594,21 +1595,35 @@ void render_app() {
     case 11:
         if(!game_started){
             draw_text("GAME LIBRARY",8,26,1,accent);
-            fill_round_rect(8,39,224,38,5,rgb565(32,32,32));
-            fill_round_rect(13,44,30,28,4,rgb565(190,190,190));
-            draw_text("S",23,52,2,bg);
-            draw_text("SNAKE",51,45,1,ink);
-            draw_text("ARCADE CLASSIC",51,59,1,muted);
-            draw_text("MORE GAMES CAN BE ADDED",8,89,1,muted);
-            draw_text("ENTER: PLAY SNAKE",8,111,1,accent);
+            const char* games[]={"SNAKE","GUESS NUMBER","MATH QUIZ"};
+            const char* details[]={"ARCADE CLASSIC","GUESS 1 TO 9","ADD TWO NUMBERS"};
+            for(int i=0;i<3;i++){
+                const int y=35+i*25;const bool sel=i==game_menu_selected;
+                fill_round_rect(7,y,226,22,4,sel?(dark_theme?rgb565(65,65,65):rgb565(205,205,205)):rgb565(25,25,25));
+                draw_text(games[i],14,y+3,1,sel?(dark_theme?rgb565(255,255,255):rgb565(0,0,0)):ink);
+                draw_text(details[i],112,y+3,1,sel?(dark_theme?rgb565(255,255,255):rgb565(0,0,0)):muted);
+            }
+            draw_text("UP/DN SELECT  ENTER PLAY",8,111,1,accent);
             draw_text("ESC: HOME",8,124,1,muted);
-        } else {
+        } else if(game_mode==0){
             draw_text("SNAKE",8,25,1,accent);
             if(game_over)draw_text("GAME OVER - ENTER",100,25,1,accent);
             for(int i=0;i<snake_len;i++)fill_rect(16+snake_x[i]*9,38+snake_y[i]*8,7,6,accent);
             fill_rect(16+food_x*9,38+food_y*8,7,6,rgb565(180,180,180));
             std::snprintf(line,sizeof(line),"SCORE %d",game_score);draw_text(line,8,116,1,ink);
             draw_text("ARROWS MOVE  ESC GAMES",8,128,1,muted);
+        } else if(game_mode==1){
+            draw_text("GUESS THE NUMBER",8,34,1,accent);
+            draw_text("PICK A NUMBER 1 TO 9",8,54,1,ink);
+            std::snprintf(line,sizeof(line),"YOUR GUESS: %d",game_answer);draw_text(line,8,75,1,ink);
+            draw_text(game_feedback,8,96,1,accent);
+            draw_text("TYPE 1-9  ENTER CHECK",8,124,1,muted);
+        } else {
+            draw_text("MATH QUIZ",8,34,1,accent);
+            std::snprintf(line,sizeof(line),"%d + %d = ?",game_a,game_b);draw_text(line,8,58,2,ink);
+            std::snprintf(line,sizeof(line),"ANSWER: %d",game_answer);draw_text(line,8,86,1,ink);
+            draw_text(game_feedback,8,105,1,accent);
+            draw_text("TYPE ANSWER  ENTER CHECK",8,124,1,muted);
         }
         break;
     default:
@@ -1963,6 +1978,19 @@ void poll_keyboard() {
             ui_dirty=true;
             continue;
         }
+        if(key==KEY_ESC){
+            if(active_app==0){
+                if(viewing_file){viewing_file=false;file_scroll=0;}
+                else if(std::strcmp(current_dir,"/sdcard")!=0){char* slash=std::strrchr(current_dir,'/');if(slash&&slash!=current_dir)*slash=0;else std::strcpy(current_dir,"/sdcard");refresh_files();}
+                else active_app=-1;
+            } else if(active_app==1&&note_editing){save_note();note_editing=false;refresh_notes();notes_action=0;}
+            else if(active_app==3&&bluetooth_screen){stop_ble_scan();bluetooth_screen=false;}
+            else if(active_app==3&&wifi_setup_step>0){wifi_setup_step=0;}
+            else if(active_app==11&&game_started){game_started=false;}
+            else {if(active_app==16&&music_playing)music_stop_requested=true;active_app=-1;}
+            ui_dirty=true;
+            continue;
+        }
         if(active_app==0){
             if(viewing_file){if(is_back(key)){viewing_file=false;file_scroll=0;}else if(is_up(key)||is_left(key))file_scroll=std::max(0,file_scroll-1);else if(is_down(key)||is_right(key)){const int lines=wrapped_line_count(viewer_buffer,36);file_scroll=std::min(std::max(0,lines-5),file_scroll+1);}}
             else if(is_back(key)){if(std::strcmp(current_dir,"/sdcard")!=0){char* slash=std::strrchr(current_dir,'/');if(slash&&slash!=current_dir)*slash=0;else std::strcpy(current_dir,"/sdcard");refresh_files();}else active_app=-1;}
@@ -1982,6 +2010,14 @@ void poll_keyboard() {
                 else if(is_left(key)||is_right(key))notes_action=is_left(key)?0:1;
                 else if(key==KEY_ENTER){if(notes_action==1)create_note();else if(note_count>0)open_note(note_selected);else notes_action=1;}
                 else if(ch=='n'||ch=='N')create_note();
+                else if(ch=='d'||ch=='D'){
+                    if(note_count>0&&note_selected>=0&&note_selected<note_count){
+                        const char* folders[]={"/sdcard/MCAI-OS/notes","/sdcard/notes","/sdcard/Notes"};
+                        char path[112];std::snprintf(path,sizeof(path),"%s/%.39s",folders[note_folder[note_selected]],note_files[note_selected]);
+                        if(unlink(path)==0){refresh_notes();note_selected=std::min(note_selected,std::max(0,note_count-1));std::snprintf(store_message,sizeof(store_message),"NOTE DELETED");}
+                        else std::snprintf(store_message,sizeof(store_message),"DELETE FAILED");
+                    }
+                }
                 else if(is_back(key))active_app=-1;
             } else {
                 if(is_back(key)||(key==KEY_ENTER&&fn_lock)){save_note();note_editing=false;refresh_notes();notes_action=0;}
@@ -2119,12 +2155,25 @@ void poll_keyboard() {
         } else if(active_app==8){/* Every key press is counted above. */}
         else if(active_app==11){
             if(is_back(key)){if(game_started)game_started=false;else active_app=-1;}
-            else if(!game_started&&key==KEY_ENTER){game_started=true;game_over=false;snake_len=3;snake_x[0]=10;snake_y[0]=4;snake_x[1]=9;snake_y[1]=4;snake_x[2]=8;snake_y[2]=4;snake_dx=1;snake_dy=0;food_x=14;food_y=4;game_score=0;game_tick_us=esp_timer_get_time();}
-            else if(is_up(key)&&snake_dy==0){snake_dx=0;snake_dy=-1;}
-            else if(is_down(key)&&snake_dy==0){snake_dx=0;snake_dy=1;}
-            else if(is_left(key)&&snake_dx==0){snake_dx=-1;snake_dy=0;}
-            else if(is_right(key)&&snake_dx==0){snake_dx=1;snake_dy=0;}
-            else if(game_over&&key==KEY_ENTER){game_started=false;}
+            else if(!game_started&&is_up(key)){game_menu_selected=(game_menu_selected+2)%3;}
+            else if(!game_started&&is_down(key)){game_menu_selected=(game_menu_selected+1)%3;}
+            else if(!game_started&&key==KEY_ENTER){
+                game_mode=game_menu_selected;game_started=true;game_over=false;game_answer=-1;
+                std::snprintf(game_feedback,sizeof(game_feedback),"TRY IT!");
+                if(game_mode==0){snake_len=3;snake_x[0]=10;snake_y[0]=4;snake_x[1]=9;snake_y[1]=4;snake_x[2]=8;snake_y[2]=4;snake_dx=1;snake_dy=0;food_x=14;food_y=4;game_score=0;game_tick_us=esp_timer_get_time();}
+                else if(game_mode==1)game_target=1+(esp_timer_get_time()/1000)%9;
+                else {game_a=1+(esp_timer_get_time()/1000)%4;game_b=1+(esp_timer_get_time()/100000)%4;}
+            }
+            else if(game_started&&game_mode==0&&is_up(key)&&snake_dy==0){snake_dx=0;snake_dy=-1;}
+            else if(game_started&&game_mode==0&&is_down(key)&&snake_dy==0){snake_dx=0;snake_dy=1;}
+            else if(game_started&&game_mode==0&&is_left(key)&&snake_dx==0){snake_dx=-1;snake_dy=0;}
+            else if(game_started&&game_mode==0&&is_right(key)&&snake_dx==0){snake_dx=1;snake_dy=0;}
+            else if(game_started&&game_mode!=0&&ch>='0'&&ch<='9'){game_answer=ch-'0';}
+            else if(game_started&&game_mode!=0&&key==KEY_ENTER){
+                const int expected=game_mode==1?game_target:game_a+game_b;
+                if(game_answer==expected){std::snprintf(game_feedback,sizeof(game_feedback),"CORRECT!");game_started=false;game_menu_selected=game_mode;}
+                else std::snprintf(game_feedback,sizeof(game_feedback),game_mode==1?(game_answer<game_target?"TOO LOW":"TOO HIGH"):"TRY AGAIN");
+            }
         }
         if(is_back(key)&&active_app>=0&&active_app!=0&&active_app!=1&&active_app!=2&&active_app!=3&&active_app!=5&&active_app!=6&&active_app!=11)active_app=-1;
     }
@@ -2173,7 +2222,7 @@ extern "C" void app_main(void) {
         boot_button_was_pressed=boot_pressed;
         const std::int64_t now=esp_timer_get_time();
         if(timer_running&&now>=timer_end_us){timer_running=false;timer_seconds=0;std::snprintf(timer_input,sizeof(timer_input),"00:00:00");ui_dirty=true;play_tone(880,180);play_tone(1175,180);play_tone(1568,260);}
-        if(active_app==11&&game_started&&!game_over&&now-game_tick_us>220000){
+        if(active_app==11&&game_started&&game_mode==0&&!game_over&&now-game_tick_us>220000){
             game_tick_us=now;
             for(int i=snake_len-1;i>0;i--){snake_x[i]=snake_x[i-1];snake_y[i]=snake_y[i-1];}
             snake_x[0]+=snake_dx;snake_y[0]+=snake_dy;
