@@ -7,13 +7,14 @@
 #include "esp_err.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_sntp.h"
-#include "esp_bt.h"
-#include "esp_bt_main.h"
-#include "esp_gap_ble_api.h"
+#include "nimble/nimble_port.h"
+#include "nimble/nimble_port_freertos.h"
+#include "host/ble_hs.h"
 #include "esp_http_client.h"
 #include "esp_https_ota.h"
 #include "esp_ota_ops.h"
@@ -28,6 +29,7 @@
 #include "esp_vfs_fat.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/event_groups.h"
 #include "sdmmc_cmd.h"
 
 #include <algorithm>
@@ -99,13 +101,17 @@ char wifi_task_ssid[33]={};
 char wifi_task_password[65]={};
 char wifi_ip_text[16]="0.0.0.0";
 esp_netif_t* wifi_sta_netif=nullptr;
+EventGroupHandle_t wifi_event_group=nullptr;
+bool wifi_event_handlers_registered=false;
+constexpr EventBits_t WIFI_GOT_IP_BIT=BIT0, WIFI_DISCONNECTED_BIT=BIT1;
 char wifi_networks[16][33]={}; int wifi_network_rssi[16]={}; int wifi_network_auth[16]={};
 int wifi_network_count=0, wifi_network_selected=0, wifi_network_scroll=0;
 int ble_device_count=0, ble_device_scroll=0;
 char ble_devices[12][32]={};
 char ble_rssi[12][8]={};
 char ble_addresses[12][18]={};
-esp_ble_scan_params_t ble_scan_params={};
+bool ble_synced=false, ble_scan_requested=false;
+std::uint8_t ble_own_addr_type=0;
 char calc_buffer[48] = {};
 int calc_length = 0;
 bool calc_showing_result=false;
@@ -510,121 +516,131 @@ esp_err_t catalogue_http_event(esp_http_client_event_t* evt) {
     }
     return ESP_OK;
 }
-void ble_gap_callback(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param) {
-    switch(event) {
-    case ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT:
-        if(param->scan_param_cmpl.status==ESP_BT_STATUS_SUCCESS) {
-            const esp_err_t e=esp_ble_gap_start_scanning(6);
-            ble_scan_active=(e==ESP_OK);
-            if(e!=ESP_OK){std::snprintf(store_message,sizeof(store_message),"BLE SCAN START FAIL");ESP_LOGE(kTag,"BLE scan start: %s",esp_err_to_name(e));}
+int ble_gap_callback(struct ble_gap_event* event, void* arg) {
+    switch(event->type) {
+    case BLE_GAP_EVENT_DISC: {
+        struct ble_hs_adv_fields fields{};
+        const int parsed=ble_hs_adv_parse_fields(&fields,event->disc.data,event->disc.length_data);
+        if(parsed!=0)return 0;
+        char label[32]={};
+        if(fields.name && fields.name_len) {
+            const size_t n=std::min((size_t)31,(size_t)fields.name_len);
+            std::memcpy(label,fields.name,n);label[n]=0;
         } else {
-            ble_scan_active=false;
-            std::snprintf(store_message,sizeof(store_message),"BLE PARAM SET FAIL");
-            ESP_LOGE(kTag,"BLE scan parameters failed: %d",param->scan_param_cmpl.status);
+            if(!ble_complex_mode)return 0;
+            std::snprintf(label,sizeof(label),"UNNAMED DEVICE");
+        }
+        char address[18];
+        std::snprintf(address,sizeof(address),"%02X:%02X:%02X:%02X:%02X:%02X",
+            event->disc.addr.val[0],event->disc.addr.val[1],event->disc.addr.val[2],
+            event->disc.addr.val[3],event->disc.addr.val[4],event->disc.addr.val[5]);
+        int found=-1;
+        for(int i=0;i<ble_device_count;i++)if(std::strcmp(ble_addresses[i],address)==0){found=i;break;}
+        if(found<0&&ble_device_count<12)found=ble_device_count++;
+        if(found>=0) {
+            std::snprintf(ble_devices[found],sizeof(ble_devices[found]),"%.31s",label);
+            ble_device_named[found]=(fields.name&&fields.name_len>0);
+            std::snprintf(ble_addresses[found],sizeof(ble_addresses[found]),"%s",address);
+            std::snprintf(ble_rssi[found],sizeof(ble_rssi[found]),"%d",event->disc.rssi);
         }
         ui_dirty=true;
         break;
-    case ESP_GAP_BLE_SCAN_RESULT_EVT:
-        if(param->scan_rst.search_evt==ESP_GAP_SEARCH_INQ_RES_EVT) {
-            uint8_t name_len=0;
-            uint8_t* name=esp_ble_resolve_adv_data(param->scan_rst.ble_adv,ESP_BLE_AD_TYPE_NAME_CMPL,&name_len);
-            char label[32]={};
-            if(name && name_len) {
-                size_t n=std::min((size_t)31,(size_t)name_len);
-                std::memcpy(label,name,n); label[n]=0;
-            } else {
-                if(!ble_complex_mode) break;
-                std::snprintf(label,sizeof(label),"UNNAMED DEVICE");
-            }
-            char address[18];
-            std::snprintf(address,sizeof(address),"%02X:%02X:%02X:%02X:%02X:%02X",
-                param->scan_rst.bda[0],param->scan_rst.bda[1],param->scan_rst.bda[2],
-                param->scan_rst.bda[3],param->scan_rst.bda[4],param->scan_rst.bda[5]);
-            int found=-1;
-            for(int i=0;i<ble_device_count;i++) if(std::strcmp(ble_addresses[i],address)==0){found=i;break;}
-            if(found<0 && ble_device_count<12) found=ble_device_count++;
-            if(found>=0) {
-                std::snprintf(ble_devices[found],sizeof(ble_devices[found]),"%.31s",label);
-                ble_device_named[found]=(name && name_len>0);
-                std::snprintf(ble_addresses[found],sizeof(ble_addresses[found]),"%s",address);
-                std::snprintf(ble_rssi[found],sizeof(ble_rssi[found]),"%d",param->scan_rst.rssi);
-            }
-            ui_dirty=true;
-        } else if(param->scan_rst.search_evt==ESP_GAP_SEARCH_INQ_CMPL_EVT) {
-            ble_scan_active=false;
-            ui_dirty=true;
-        }
-        break;
-    case ESP_GAP_BLE_SCAN_START_COMPLETE_EVT:
-        if(param->scan_start_cmpl.status!=ESP_BT_STATUS_SUCCESS){ble_scan_active=false;std::snprintf(store_message,sizeof(store_message),"BLE SCAN START FAIL");}
-        ui_dirty=true;
-        break;
-    case ESP_GAP_BLE_SCAN_STOP_COMPLETE_EVT:
-        ble_scan_active=false; ui_dirty=true; break;
-    default: break;
     }
+    case BLE_GAP_EVENT_DISC_COMPLETE:
+        ble_scan_active=false;
+        ui_dirty=true;
+        break;
+    default:
+        break;
+    }
+    return 0;
+}
+void begin_ble_scan() {
+    if(!ble_synced||!ble_scan_requested)return;
+    const int addr_rc=ble_hs_id_infer_auto(0,&ble_own_addr_type);
+    if(addr_rc!=0) {
+        ble_scan_active=false;
+        std::snprintf(store_message,sizeof(store_message),"BLE ADDRESS FAIL");
+        ESP_LOGE(kTag,"NimBLE address setup failed: %d",addr_rc);
+        ui_dirty=true;
+        return;
+    }
+    struct ble_gap_disc_params params{};
+    params.passive=1;
+    params.filter_duplicates=1;
+    params.itvl=0;
+    params.window=0;
+    params.filter_policy=0;
+    params.limited=0;
+    const int rc=ble_gap_disc(ble_own_addr_type,6000,&params,ble_gap_callback,nullptr);
+    ble_scan_active=(rc==0);
+    if(rc!=0) {
+        std::snprintf(store_message,sizeof(store_message),"BLE SCAN START FAIL");
+        ESP_LOGE(kTag,"NimBLE scan start failed: %d",rc);
+    } else std::snprintf(store_message,sizeof(store_message),"SCANNING FOR 6 SECONDS");
+    ui_dirty=true;
+}
+void nimble_on_reset(int reason) {
+    ble_synced=false;
+    ble_scan_active=false;
+    ESP_LOGE(kTag,"NimBLE host reset: %d",reason);
+}
+void nimble_on_sync() {
+    ble_synced=true;
+    ESP_LOGI(kTag,"NimBLE host synchronized");
+    if(ble_scan_requested)begin_ble_scan();
+}
+void nimble_host_task(void*) {
+    ESP_LOGI(kTag,"NimBLE host task started");
+    nimble_port_run();
+    nimble_port_freertos_deinit();
 }
 bool init_bluetooth() {
-    if(ble_ready) return true;
+    if(ble_ready)return true;
+    const size_t free_internal=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+    const size_t largest_internal=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
+    ESP_LOGI(kTag,"BLE init memory: internal free=%u largest=%u",(unsigned)free_internal,(unsigned)largest_internal);
     esp_err_t e=nvs_flash_init();
-    if(e==ESP_ERR_NVS_NO_FREE_PAGES||e==ESP_ERR_NVS_NEW_VERSION_FOUND){nvs_flash_erase();e=nvs_flash_init();}
-    if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE){std::snprintf(store_message,sizeof(store_message),"BT NVS INIT FAIL");ESP_LOGE(kTag,"BT NVS init: %s",esp_err_to_name(e));return false;}
-    e=esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
-    if(e!=ESP_OK && e!=ESP_ERR_NOT_SUPPORTED && e!=ESP_ERR_INVALID_STATE) {
-        std::snprintf(store_message,sizeof(store_message),"BT MEMORY RELEASE FAIL");ESP_LOGE(kTag,"BT memory release: %s",esp_err_to_name(e)); return false;
+    if(e==ESP_ERR_NVS_NO_FREE_PAGES||e==ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        e=nvs_flash_erase();
+        if(e==ESP_OK)e=nvs_flash_init();
     }
-    esp_bt_controller_status_t status=esp_bt_controller_get_status();
-    if(status==ESP_BT_CONTROLLER_STATUS_IDLE) {
-        esp_bt_controller_config_t cfg=BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-        e=esp_bt_controller_init(&cfg);
-        if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) { std::snprintf(store_message,sizeof(store_message),"BT CTRL INIT FAIL");ESP_LOGE(kTag,"BT controller init: %s",esp_err_to_name(e)); return false; }
+    if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE) {
+        std::snprintf(store_message,sizeof(store_message),"BLE NVS INIT FAIL");
+        ESP_LOGE(kTag,"BLE NVS init: %s",esp_err_to_name(e));return false;
     }
-    status=esp_bt_controller_get_status();
-    if(status==ESP_BT_CONTROLLER_STATUS_INITED) {
-        e=esp_bt_controller_enable(ESP_BT_MODE_BLE);
-        if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) { std::snprintf(store_message,sizeof(store_message),"BT CTRL ENABLE FAIL");ESP_LOGE(kTag,"BT controller enable: %s",esp_err_to_name(e)); return false; }
+    e=nimble_port_init();
+    if(e!=ESP_OK) {
+        std::snprintf(store_message,sizeof(store_message),"NIMBLE INIT: %.16s",esp_err_to_name(e));
+        ESP_LOGE(kTag,"NimBLE init failed: %s; internal free=%u largest=%u",esp_err_to_name(e),
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
+            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
+        return false;
     }
-    esp_bluedroid_status_t host=esp_bluedroid_get_status();
-    if(host==ESP_BLUEDROID_STATUS_UNINITIALIZED) {
-        e=esp_bluedroid_init();
-        if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) { std::snprintf(store_message,sizeof(store_message),"BT HOST INIT FAIL");ESP_LOGE(kTag,"Bluedroid init: %s",esp_err_to_name(e)); return false; }
-        host=esp_bluedroid_get_status();
-    }
-    if(host==ESP_BLUEDROID_STATUS_INITIALIZED) {
-        e=esp_bluedroid_enable();
-        if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) { std::snprintf(store_message,sizeof(store_message),"BT HOST ENABLE FAIL");ESP_LOGE(kTag,"Bluedroid enable: %s",esp_err_to_name(e)); return false; }
-    }
-    if(esp_bt_controller_get_status()!=ESP_BT_CONTROLLER_STATUS_ENABLED){
-        std::snprintf(store_message,sizeof(store_message),"BT CTRL NOT ENABLED");return false;
-    }
-    if(esp_bluedroid_get_status()!=ESP_BLUEDROID_STATUS_ENABLED){
-        std::snprintf(store_message,sizeof(store_message),"BT HOST NOT ENABLED");return false;
-    }
-    e=esp_ble_gap_register_callback(ble_gap_callback);
-    if(e!=ESP_OK && e!=ESP_ERR_INVALID_STATE) { std::snprintf(store_message,sizeof(store_message),"BT GAP CALLBACK FAIL");ESP_LOGE(kTag,"BLE GAP callback: %s",esp_err_to_name(e)); return false; }
+    ble_hs_cfg.reset_cb=nimble_on_reset;
+    ble_hs_cfg.sync_cb=nimble_on_sync;
+    nimble_port_freertos_init(nimble_host_task);
     ble_ready=true;
-    ESP_LOGI(kTag,"Bluetooth LE initialized");
+    ESP_LOGI(kTag,"NimBLE initialized");
     return true;
 }
 bool start_ble_scan() {
-    ble_device_count=0; ble_device_scroll=0;
+    ble_device_count=0;ble_device_scroll=0;
     std::memset(ble_devices,0,sizeof(ble_devices));
     std::memset(ble_rssi,0,sizeof(ble_rssi));
     std::memset(ble_addresses,0,sizeof(ble_addresses));
-    if(!init_bluetooth()) return false;
-    ble_scan_params.scan_type=BLE_SCAN_TYPE_PASSIVE;
-    ble_scan_params.own_addr_type=BLE_ADDR_TYPE_PUBLIC;
-    ble_scan_params.scan_filter_policy=BLE_SCAN_FILTER_ALLOW_ALL;
-    ble_scan_params.scan_interval=0x50;
-    ble_scan_params.scan_window=0x20;
-    ble_scan_params.scan_duplicate=BLE_SCAN_DUPLICATE_DISABLE;
-    const esp_err_t e=esp_ble_gap_set_scan_params(&ble_scan_params);
-    if(e!=ESP_OK) { std::snprintf(store_message,sizeof(store_message),"BLE SCAN SETUP FAIL"); ESP_LOGE(kTag,"BLE set scan params: %s",esp_err_to_name(e)); return false; }
-    std::snprintf(store_message,sizeof(store_message),"SCANNING FOR 6 SECONDS");
+    ble_scan_requested=true;
+    if(!init_bluetooth())return false;
+    if(ble_synced)begin_ble_scan();
+    else std::snprintf(store_message,sizeof(store_message),"STARTING BLUETOOTH");
     return true;
 }
 void stop_ble_scan() {
-    if(ble_ready && ble_scan_active) esp_ble_gap_stop_scanning();
+    ble_scan_requested=false;
+    if(ble_ready&&ble_scan_active) {
+        const int rc=ble_gap_disc_cancel();
+        if(rc!=0)ESP_LOGW(kTag,"NimBLE scan cancel: %d",rc);
+    }
     ble_scan_active=false;
 }
 void start_time_sync() {
@@ -638,31 +654,84 @@ void start_time_sync() {
         ESP_LOGI(kTag,"NTP time sync started");
     }
 }
+void wifi_event_handler(void*,esp_event_base_t base,std::int32_t id,void* data) {
+    if(base==WIFI_EVENT&&id==WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_connected=false;
+        if(wifi_event_group)xEventGroupSetBits(wifi_event_group,WIFI_DISCONNECTED_BIT);
+        ESP_LOGW(kTag,"Wi-Fi disconnected");
+    } else if(base==IP_EVENT&&id==IP_EVENT_STA_GOT_IP) {
+        const auto* event=static_cast<ip_event_got_ip_t*>(data);
+        std::snprintf(wifi_ip_text,sizeof(wifi_ip_text),IPSTR,IP2STR(&event->ip_info.ip));
+        wifi_connected=true;
+        wifi_started=true;
+        if(wifi_event_group)xEventGroupSetBits(wifi_event_group,WIFI_GOT_IP_BIT);
+        ESP_LOGI(kTag,"Wi-Fi got IP: %s",wifi_ip_text);
+    }
+    ui_dirty=true;
+}
+void log_wifi_memory(const char* stage) {
+    ESP_LOGI(kTag,"Wi-Fi %s memory: internal free=%u largest=%u 8bit free=%u",
+        stage,
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
+        (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT));
+}
 bool wifi_init_error(const char* stage,esp_err_t error) {
+    log_wifi_memory("failure");
     ESP_LOGE(kTag,"Wi-Fi init %s failed: %s",stage,esp_err_to_name(error));
     std::snprintf(store_message,sizeof(store_message),"WIFI %s: %.18s",stage,esp_err_to_name(error));
     return false;
 }
 bool init_wifi_driver() {
-    if(wifi_driver_ready) return true;
+    if(wifi_driver_ready)return true;
+    log_wifi_memory("before init");
     esp_err_t e=nvs_flash_init();
-    if(e==ESP_ERR_NVS_NO_FREE_PAGES||e==ESP_ERR_NVS_NEW_VERSION_FOUND){
+    if(e==ESP_ERR_NVS_NO_FREE_PAGES||e==ESP_ERR_NVS_NEW_VERSION_FOUND) {
         e=nvs_flash_erase();
         if(e!=ESP_OK)return wifi_init_error("NVS ERASE",e);
         e=nvs_flash_init();
     }
     if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("NVS",e);
-    e=esp_netif_init();if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("NETIF",e);
-    e=esp_event_loop_create_default();if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("EVENT",e);
-    if(!wifi_sta_netif){
+    e=esp_netif_init();
+    if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("NETIF",e);
+    e=esp_event_loop_create_default();
+    if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("EVENT",e);
+    if(!wifi_event_group) {
+        wifi_event_group=xEventGroupCreate();
+        if(!wifi_event_group) {
+            std::snprintf(store_message,sizeof(store_message),"WIFI EVENT MEMORY FAIL");
+            log_wifi_memory("event group failure");
+            return false;
+        }
+    }
+    if(!wifi_event_handlers_registered) {
+        e=esp_event_handler_register(WIFI_EVENT,ESP_EVENT_ANY_ID,&wifi_event_handler,nullptr);
+        if(e!=ESP_OK)return wifi_init_error("EVENT REG",e);
+        e=esp_event_handler_register(IP_EVENT,IP_EVENT_STA_GOT_IP,&wifi_event_handler,nullptr);
+        if(e!=ESP_OK)return wifi_init_error("IP REG",e);
+        wifi_event_handlers_registered=true;
+    }
+    if(!wifi_sta_netif) {
         wifi_sta_netif=esp_netif_create_default_wifi_sta();
-        if(!wifi_sta_netif){ESP_LOGE(kTag,"Wi-Fi station interface creation failed");std::snprintf(store_message,sizeof(store_message),"WIFI NETIF CREATE FAILED");return false;}
+        if(!wifi_sta_netif) {
+            std::snprintf(store_message,sizeof(store_message),"WIFI NETIF CREATE FAILED");
+            log_wifi_memory("netif failure");
+            return false;
+        }
     }
     wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();
-    e=esp_wifi_init(&init);if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("DRIVER",e);
-    e=esp_wifi_set_mode(WIFI_MODE_STA);if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("MODE",e);
-    e=esp_wifi_start();if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("START",e);
+    e=esp_wifi_init(&init);
+    if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("DRIVER",e);
+    e=esp_wifi_set_storage(WIFI_STORAGE_RAM);
+    if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("STORAGE",e);
+    e=esp_wifi_set_mode(WIFI_MODE_STA);
+    if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("MODE",e);
+    e=esp_wifi_start();
+    if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("START",e);
+    e=esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+    if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)ESP_LOGW(kTag,"Wi-Fi power save setting: %s",esp_err_to_name(e));
     wifi_driver_ready=true;
+    log_wifi_memory("after init");
     return true;
 }
 bool scan_wifi_networks() {
@@ -697,34 +766,45 @@ bool scan_wifi_networks() {
     return wifi_network_count>0;
 }
 bool connect_wifi_credentials(const char* ssid,const char* password) {
-    wifi_connected=false;std::snprintf(wifi_ip_text,sizeof(wifi_ip_text),"0.0.0.0");
-    if(!ssid||!ssid[0]||std::strlen(ssid)>32||!password||std::strlen(password)>64||!init_wifi_driver()){
+    wifi_connected=false;
+    std::snprintf(wifi_ip_text,sizeof(wifi_ip_text),"0.0.0.0");
+    if(!ssid||!ssid[0]||std::strlen(ssid)>32||!password||std::strlen(password)>64||!init_wifi_driver()) {
         std::snprintf(store_message,sizeof(store_message),"WIFI INIT / INPUT FAILED");return false;
     }
     wifi_config_t cfg={};
     std::memcpy(cfg.sta.ssid,ssid,std::strlen(ssid));
     std::memcpy(cfg.sta.password,password,std::strlen(password));
     cfg.sta.threshold.authmode=WIFI_AUTH_OPEN;
-    esp_wifi_disconnect();
-    if(esp_wifi_set_config(WIFI_IF_STA,&cfg)!=ESP_OK||esp_wifi_connect()!=ESP_OK){
-        std::snprintf(store_message,sizeof(store_message),"WIFI CONNECT REQUEST FAILED");return false;
-    }
-    wifi_started=true;
-    for(int i=0;i<32;i++){
-        wifi_ap_record_t ap{};
-        if(esp_wifi_sta_get_ap_info(&ap)==ESP_OK){
-            esp_netif_ip_info_t ip{};
-            if(wifi_sta_netif&&esp_netif_get_ip_info(wifi_sta_netif,&ip)==ESP_OK&&ip.ip.addr!=0){
-                std::snprintf(wifi_ip_text,sizeof(wifi_ip_text),IPSTR,IP2STR(&ip.ip));
-                wifi_connected=true;
-                std::snprintf(store_message,sizeof(store_message),"WIFI VERIFIED");
-                start_time_sync();
-                return true;
+    cfg.sta.pmf_cfg.capable=true;
+    cfg.sta.pmf_cfg.required=false;
+    esp_err_t e=esp_wifi_set_config(WIFI_IF_STA,&cfg);
+    if(e!=ESP_OK)return wifi_init_error("CONFIG",e);
+    for(int attempt=0;attempt<3;attempt++) {
+        xEventGroupClearBits(wifi_event_group,WIFI_GOT_IP_BIT|WIFI_DISCONNECTED_BIT);
+        e=esp_wifi_connect();
+        if(e!=ESP_OK) {
+            ESP_LOGE(kTag,"Wi-Fi connect request: %s",esp_err_to_name(e));
+            if(attempt==2) {
+                std::snprintf(store_message,sizeof(store_message),"WIFI CONNECT: %.18s",esp_err_to_name(e));
+                return false;
             }
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
         }
-        vTaskDelay(pdMS_TO_TICKS(250));
+        const EventBits_t bits=xEventGroupWaitBits(wifi_event_group,WIFI_GOT_IP_BIT|WIFI_DISCONNECTED_BIT,
+            pdTRUE,pdFALSE,pdMS_TO_TICKS(12000));
+        if(bits&WIFI_GOT_IP_BIT) {
+            wifi_connected=true;
+            wifi_started=true;
+            std::snprintf(store_message,sizeof(store_message),"WIFI VERIFIED");
+            start_time_sync();
+            return true;
+        }
+        if(bits&WIFI_DISCONNECTED_BIT)ESP_LOGW(kTag,"Wi-Fi association attempt %d disconnected",attempt+1);
+        else ESP_LOGW(kTag,"Wi-Fi association attempt %d timed out",attempt+1);
+        esp_wifi_disconnect();
+        vTaskDelay(pdMS_TO_TICKS(400));
     }
-    esp_wifi_disconnect();
     wifi_connected=false;
     std::snprintf(wifi_ip_text,sizeof(wifi_ip_text),"0.0.0.0");
     std::snprintf(store_message,sizeof(store_message),"NO IP - CHECK PASSWORD / ROUTER");
