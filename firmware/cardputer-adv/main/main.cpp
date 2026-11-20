@@ -103,6 +103,7 @@ bool ble_complex_mode=false;
 bool ble_device_named[12]={};
 int last_clock_render_second=-1;
 bool wifi_driver_ready=false;
+bool wifi_radio_stopped_for_ble=false;
 bool wifi_connected=false;
 bool wifi_connecting=false;
 char wifi_task_ssid[33]={};
@@ -610,6 +611,17 @@ void nimble_host_task(void*) {
 }
 bool init_bluetooth() {
     if(ble_ready)return true;
+    // Wi-Fi and BLE share the ESP32-S3 radio and internal RAM. Stop the
+    // Wi-Fi driver while scanning; it will restart on the next Wi-Fi action.
+    if(wifi_driver_ready&&!wifi_radio_stopped_for_ble){
+        esp_wifi_disconnect();
+        const esp_err_t stop=esp_wifi_stop();
+        if(stop==ESP_OK||stop==ESP_ERR_WIFI_NOT_INIT||stop==ESP_ERR_WIFI_NOT_STARTED){
+            wifi_radio_stopped_for_ble=(stop==ESP_OK);
+            wifi_connected=false;
+            std::snprintf(wifi_ip_text,sizeof(wifi_ip_text),"0.0.0.0");
+        } else ESP_LOGW(kTag,"Wi-Fi stop before BLE: %s",esp_err_to_name(stop));
+    }
     const size_t free_internal=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
     const size_t largest_internal=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
     ESP_LOGI(kTag,"BLE init memory: internal free=%u largest=%u",(unsigned)free_internal,(unsigned)largest_internal);
@@ -696,7 +708,15 @@ bool wifi_init_error(const char* stage,esp_err_t error) {
     return false;
 }
 bool init_wifi_driver() {
-    if(wifi_driver_ready)return true;
+    if(wifi_driver_ready){
+        if(wifi_radio_stopped_for_ble){
+            const esp_err_t restart=esp_wifi_start();
+            if(restart!=ESP_OK&&restart!=ESP_ERR_INVALID_STATE)return wifi_init_error("RESTART",restart);
+            wifi_radio_stopped_for_ble=false;
+            esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+        }
+        return true;
+    }
     log_wifi_memory("before init");
     esp_err_t e=nvs_flash_init();
     if(e==ESP_ERR_NVS_NO_FREE_PAGES||e==ESP_ERR_NVS_NEW_VERSION_FOUND) {
