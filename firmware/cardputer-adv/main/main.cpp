@@ -1645,7 +1645,7 @@ void poll_keyboard() {
         char ch=decode_key(row,col,shift_held!=caps_lock);
         // The apostrophe key is Escape normally and types apostrophe with Fn.
         // The four physical arrow keys navigate normally; Fn types their legends.
-        if(row==2&&col==12){if(fn_lock){ch='\\'';}else{key=KEY_ESC;ch=0;}}
+        if(row==2&&col==12){if(fn_lock){ch='\'';}else{key=KEY_ESC;ch=0;}}
         if(fn_lock){
             if(row==0&&col>=1&&col<=12){ch=0;std::snprintf(last_key_label,sizeof(last_key_label),"F%d",col);}
             else if(row==0&&col==13){key=KEY_DELETE;ch=0;}
