@@ -16,6 +16,13 @@
 #include "nimble/nimble_port_freertos.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
+// NimBLE defines min/max macros; undefine them before C++ standard headers.
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
 #include "esp_http_client.h"
 #include "esp_https_ota.h"
 #include "esp_ota_ops.h"
