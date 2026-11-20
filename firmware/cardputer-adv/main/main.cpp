@@ -287,7 +287,7 @@ void draw_mcaI_logo_splash() {
     fill_rect(67,57,106,11,navy);
     fill_rect(67,69,106,41,grey);
     draw_text("OS",83,69,6,black);
-    draw_text("PRESS ANY BUTTON TO START",42,120,1,black);
+    draw_text("STARTING MCAI-OS",72,120,1,black);
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
 }
 
@@ -1270,7 +1270,6 @@ void render_home() {
         const int page=selected_app/kAppsPerPage;
         const int pages=std::max(1,(total+kAppsPerPage-1)/kAppsPerPage);
         draw_text("YOUR APPS",9,31,1,muted);
-        const int colors[4]={0,1,2,3};
         for(int tile=0;tile<4;tile++) {
             const int pos=page*kAppsPerPage+tile;
             if(pos>=total)continue;
