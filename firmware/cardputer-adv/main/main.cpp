@@ -115,6 +115,7 @@ int file_scroll = 0;
 char note_buffer[512] = {};
 int note_length = 0, note_scroll = 0;
 char note_files[16][40] = {};
+char note_paths[16][112] = {};
 int note_count=0, note_selected=0, notes_action=1; // 1 = Add Note button, 0 = note list
 char note_filename[112] = {};
 bool note_editing=false;
@@ -375,24 +376,42 @@ void refresh_notes() {
     if(!sd_ready){std::snprintf(store_message,sizeof(store_message),"NOTES NEED SD CARD");return;}
     mkdir("/sdcard/MCAI-OS",0775);
     mkdir("/sdcard/MCAI-OS/notes",0775);
-    DIR* d=opendir("/sdcard/MCAI-OS/notes");
-    if(!d){std::snprintf(store_message,sizeof(store_message),"CANNOT OPEN NOTES FOLDER");return;}
-    struct dirent* e;
-    while((e=readdir(d))!=nullptr && note_count<16) {
-        const size_t n=std::strlen(e->d_name);
-        if(n<5 || std::strcmp(e->d_name+n-4,".txt")!=0) continue;
-        std::snprintf(note_files[note_count],sizeof(note_files[note_count]),"%.39s",e->d_name);
-        ++note_count;
+    // Read the current folder and older Cardputer notes folders so existing
+    // notes created by previous MCAI-OS builds remain visible.
+    const char* folders[]={"/sdcard/MCAI-OS/notes","/sdcard/notes","/sdcard/Notes"};
+    for(const char* folder:folders) {
+        DIR* d=opendir(folder);
+        if(!d)continue;
+        struct dirent* e;
+        while((e=readdir(d))!=nullptr && note_count<16) {
+            const size_t n=std::strlen(e->d_name);
+            if(n<5 || e->d_name[0]=='.' ||
+               std::tolower((unsigned char)e->d_name[n-4])!='.' ||
+               std::tolower((unsigned char)e->d_name[n-3])!='t' ||
+               std::tolower((unsigned char)e->d_name[n-2])!='x' ||
+               std::tolower((unsigned char)e->d_name[n-1])!='t')continue;
+            char full[112];
+            std::snprintf(full,sizeof(full),"%s/%.39s",folder,e->d_name);
+            struct stat st{};
+            if(stat(full,&st)!=0 || !S_ISREG(st.st_mode))continue;
+            bool duplicate=false;
+            for(int i=0;i<note_count;i++)if(std::strcmp(note_paths[i],full)==0)duplicate=true;
+            if(duplicate)continue;
+            std::snprintf(note_files[note_count],sizeof(note_files[0]),"%.39s",e->d_name);
+            std::snprintf(note_paths[note_count],sizeof(note_paths[0]),"%.111s",full);
+            ++note_count;
+        }
+        closedir(d);
     }
-    closedir(d);
     for(int i=0;i<note_count;i++)for(int j=i+1;j<note_count;j++)if(std::strcmp(note_files[j],note_files[i])<0){
-        char tmp[40];std::memcpy(tmp,note_files[i],sizeof(tmp));std::memcpy(note_files[i],note_files[j],sizeof(tmp));std::memcpy(note_files[j],tmp,sizeof(tmp));
+        char name[40],saved_path[112];
+        std::memcpy(name,note_files[i],sizeof(name));std::memcpy(note_files[i],note_files[j],sizeof(name));std::memcpy(note_files[j],name,sizeof(name));
+        std::memcpy(saved_path,note_paths[i],sizeof(saved_path));std::memcpy(note_paths[i],note_paths[j],sizeof(saved_path));std::memcpy(note_paths[j],saved_path,sizeof(saved_path));
     }
     note_selected=std::min(note_selected,std::max(0,note_count-1));
     note_scroll=0;
-    // Open the list with a saved note selected when notes already exist.
     notes_action=note_count>0?0:1;
-    std::snprintf(store_message,sizeof(store_message),note_count>0?"SAVED NOTES READY":"NO SAVED NOTES - ADD ONE");
+    std::snprintf(store_message,sizeof(store_message),note_count>0?"FOUND %d SAVED NOTES":"NO SAVED NOTES - ADD ONE",note_count);
 }
 bool save_note() {
     if(!sd_ready || !note_filename[0] || note_length<0 || note_length>=(int)sizeof(note_buffer)){
@@ -415,8 +434,7 @@ bool save_note() {
 }
 void open_note(int index) {
     if(!sd_ready || index<0 || index>=note_count)return;
-    char path[96];
-    std::snprintf(path,sizeof(path),"/sdcard/MCAI-OS/notes/%.39s",note_files[index]);
+    const char* path=note_paths[index];
     FILE* f=std::fopen(path,"r");
     if(!f){std::snprintf(store_message,sizeof(store_message),"CANNOT OPEN NOTE");return;}
     note_length=(int)std::fread(note_buffer,1,sizeof(note_buffer)-1,f);
@@ -638,19 +656,24 @@ bool init_wifi_driver() {
 bool scan_wifi_networks() {
     wifi_network_count=0;wifi_network_selected=0;wifi_network_scroll=0;
     if(!init_wifi_driver()){std::snprintf(store_message,sizeof(store_message),"WIFI INIT FAILED");return false;}
+    // Clear any stale/unfinished scan before starting a fresh full-band scan.
+    esp_wifi_scan_stop();
+    vTaskDelay(pdMS_TO_TICKS(40));
     wifi_scan_config_t scan={};
     scan.scan_type=WIFI_SCAN_TYPE_ACTIVE;
+    scan.show_hidden=true;
     scan.scan_time.active.min=100;
-    scan.scan_time.active.max=300;
+    scan.scan_time.active.max=600;
     const esp_err_t e=esp_wifi_scan_start(&scan,true);
     if(e!=ESP_OK){std::snprintf(store_message,sizeof(store_message),"WIFI SCAN FAILED");ESP_LOGE(kTag,"Wi-Fi scan: %s",esp_err_to_name(e));return false;}
     uint16_t count=16;
     wifi_ap_record_t records[16]={};
     if(esp_wifi_scan_get_ap_records(&count,records)!=ESP_OK){std::snprintf(store_message,sizeof(store_message),"WIFI RESULTS FAILED");return false;}
     for(int i=0;i<(int)count&&i<16;i++){
-        std::snprintf(wifi_networks[i],sizeof(wifi_networks[i]),"%.32s",reinterpret_cast<const char*>(records[i].ssid));
-        wifi_network_rssi[i]=records[i].rssi;
-        wifi_network_auth[i]=(int)records[i].authmode;
+        if(records[i].ssid[0]==0)continue;
+        std::snprintf(wifi_networks[wifi_network_count],sizeof(wifi_networks[0]),"%.32s",reinterpret_cast<const char*>(records[i].ssid));
+        wifi_network_rssi[wifi_network_count]=records[i].rssi;
+        wifi_network_auth[wifi_network_count]=(int)records[i].authmode;
         ++wifi_network_count;
     }
     for(int i=0;i<wifi_network_count;i++)for(int j=i+1;j<wifi_network_count;j++)if(wifi_network_rssi[j]>wifi_network_rssi[i]){
@@ -1341,8 +1364,9 @@ void render_app() {
             if(wifi_setup_step==3){
                 draw_text("CHOOSE WIFI NETWORK",8,28,1,accent);
                 for(int i=0;i<5;i++){int ix=wifi_network_scroll+i;if(ix>=wifi_network_count)break;char row[40];std::snprintf(row,sizeof(row),"%c %.20s %ddB",ix==wifi_network_selected?'>':' ',wifi_networks[ix],wifi_network_rssi[ix]);draw_text(row,8,43+i*12,1,ix==wifi_network_selected?accent:ink);}
-                if(wifi_network_count==0)draw_text("NO NETWORKS - PRESS M",8,60,1,ink);
-                draw_text("UP/DOWN SELECT ENTER",8,111,1,muted);draw_text("M MANUAL  ESC BACK",8,124,1,muted);
+                if(wifi_network_count==0)draw_text("NO NETWORKS - PRESS R",8,60,1,ink);
+                draw_text(store_message,8,101,1,muted);
+                draw_text("UP/DN ENTER  R RESCAN",8,114,1,muted);draw_text("M MANUAL  ESC BACK",8,126,1,muted);
             } else {
                 const bool entering_ssid=(wifi_setup_step==1);
                 draw_text(entering_ssid?"WIFI NETWORK NAME":"WIFI PASSWORD",8,29,1,accent);
@@ -1746,12 +1770,13 @@ void poll_keyboard() {
         }
         std::uint8_t key=0;
         char ch=decode_key(row,col,shift_held!=caps_lock);
-        // The apostrophe key is Escape normally and types apostrophe with Fn.
+        // Apostrophe/Esc: apostrophe normally, Escape with Fn.
+        // Del: Delete normally, Backspace with Fn.
         // The four physical arrow keys navigate normally; Fn types their legends.
-        if(row==2&&col==12){if(fn_lock){ch='\'';}else{key=KEY_ESC;ch=0;}}
+        if(row==2&&col==12){if(fn_lock){key=KEY_ESC;ch=0;}else{ch='\'';key=0;}}
         if(fn_lock){
             if(row==0&&col>=1&&col<=12){ch=0;std::snprintf(last_key_label,sizeof(last_key_label),"F%d",col);}
-            else if(row==0&&col==13){key=KEY_DELETE;ch=0;}
+            else if(row==0&&col==13){key=KEY_BACKSPACE;ch=0;}
             else if(row==2&&col==11){ch=';';key=0;}
             else if(row==3&&col==10){ch=',';key=0;}
             else if(row==3&&col==11){ch='.';key=0;}
@@ -1763,7 +1788,7 @@ void poll_keyboard() {
             else if(row==3&&col==12){key=KEY_RIGHT;ch=0;}
         }
         if(!key){
-            if(row==0&&col==13)key=KEY_BACKSPACE;
+            if(row==0&&col==13)key=KEY_DELETE;
             else if(row==1&&col==0)key=KEY_TAB;
             else if(row==2&&col==13)key=KEY_ENTER;
             else if(row==3&&col==0)key=KEY_CTRL;
@@ -1866,6 +1891,8 @@ void poll_keyboard() {
                 else if(wifi_setup_step==3){
                     if(is_up(key)){wifi_network_selected=std::max(0,wifi_network_selected-1);if(wifi_network_selected<wifi_network_scroll)wifi_network_scroll=wifi_network_selected;}
                     else if(is_down(key)){wifi_network_selected=std::min(std::max(0,wifi_network_count-1),wifi_network_selected+1);if(wifi_network_selected>=wifi_network_scroll+5)wifi_network_scroll=wifi_network_selected-4;}
+                    else if(ch=='r'||ch=='R'){scan_wifi_networks();}
+                    else if(key==KEY_BACKSPACE){wifi_setup_step=0;}
                     else if(ch=='m'||ch=='M'){wifi_ssid_input[0]=0;wifi_password_input[0]=0;wifi_setup_step=1;}
                     else if(key==KEY_ENTER&&wifi_network_count>0){
                         std::snprintf(wifi_ssid_input,sizeof(wifi_ssid_input),"%s",wifi_networks[wifi_network_selected]);
@@ -1900,7 +1927,7 @@ void poll_keyboard() {
                 else if(settings_selection==2){load_wifi_settings();wifi_setup_step=3;scan_wifi_networks();}
                 else if(settings_selection==3){bluetooth_screen=true;if(!start_ble_scan())ui_dirty=true;}
                 else if(settings_selection==4){sound_enabled=!sound_enabled;save_settings();}
-            } else if(key==KEY_ESC)active_app=-1;
+            } else if(key==KEY_ESC||key==KEY_BACKSPACE)active_app=-1;
         } else if(active_app==5){
             if(is_back(key))active_app=-1;
             else if(store_loading){std::snprintf(store_message,sizeof(store_message),"PLEASE WAIT - LOADING");}
