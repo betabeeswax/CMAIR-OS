@@ -73,7 +73,7 @@ bool is_up(std::uint8_t k){return k==KEY_UP;}
 bool is_down(std::uint8_t k){return k==KEY_DOWN;}
 bool is_left(std::uint8_t k){return k==KEY_LEFT;}
 bool is_right(std::uint8_t k){return k==KEY_RIGHT;}
-bool is_back(std::uint8_t k){return k==KEY_BACKSPACE||k==KEY_ESC;}
+bool is_back(std::uint8_t k){return k==KEY_ESC||k==KEY_DELETE;}
 constexpr char kSdMountPoint[] = "/sdcard";
 
 esp_lcd_panel_handle_t panel = nullptr;
@@ -638,27 +638,36 @@ void start_time_sync() {
         ESP_LOGI(kTag,"NTP time sync started");
     }
 }
+bool wifi_init_error(const char* stage,esp_err_t error) {
+    ESP_LOGE(kTag,"Wi-Fi init %s failed: %s",stage,esp_err_to_name(error));
+    std::snprintf(store_message,sizeof(store_message),"WIFI %s: %.18s",stage,esp_err_to_name(error));
+    return false;
+}
 bool init_wifi_driver() {
     if(wifi_driver_ready) return true;
     esp_err_t e=nvs_flash_init();
-    if(e==ESP_ERR_NVS_NO_FREE_PAGES||e==ESP_ERR_NVS_NEW_VERSION_FOUND){nvs_flash_erase();e=nvs_flash_init();}
-    if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
-    e=esp_netif_init();if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
-    e=esp_event_loop_create_default();if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
+    if(e==ESP_ERR_NVS_NO_FREE_PAGES||e==ESP_ERR_NVS_NEW_VERSION_FOUND){
+        e=nvs_flash_erase();
+        if(e!=ESP_OK)return wifi_init_error("NVS ERASE",e);
+        e=nvs_flash_init();
+    }
+    if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("NVS",e);
+    e=esp_netif_init();if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("NETIF",e);
+    e=esp_event_loop_create_default();if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("EVENT",e);
     if(!wifi_sta_netif){
         wifi_sta_netif=esp_netif_create_default_wifi_sta();
-        if(!wifi_sta_netif){ESP_LOGE(kTag,"Wi-Fi station interface creation failed");return false;}
+        if(!wifi_sta_netif){ESP_LOGE(kTag,"Wi-Fi station interface creation failed");std::snprintf(store_message,sizeof(store_message),"WIFI NETIF CREATE FAILED");return false;}
     }
     wifi_init_config_t init=WIFI_INIT_CONFIG_DEFAULT();
-    e=esp_wifi_init(&init);if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
-    e=esp_wifi_set_mode(WIFI_MODE_STA);if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
-    e=esp_wifi_start();if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return false;
+    e=esp_wifi_init(&init);if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("DRIVER",e);
+    e=esp_wifi_set_mode(WIFI_MODE_STA);if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("MODE",e);
+    e=esp_wifi_start();if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("START",e);
     wifi_driver_ready=true;
     return true;
 }
 bool scan_wifi_networks() {
     wifi_network_count=0;wifi_network_selected=0;wifi_network_scroll=0;
-    if(!init_wifi_driver()){std::snprintf(store_message,sizeof(store_message),"WIFI INIT FAILED");return false;}
+    if(!init_wifi_driver())return false;
     // Clear any stale/unfinished scan before starting a fresh full-band scan.
     esp_wifi_scan_stop();
     vTaskDelay(pdMS_TO_TICKS(40));
@@ -1863,9 +1872,9 @@ void poll_keyboard() {
                 else if(is_left(key)||is_right(key))notes_action=is_left(key)?0:1;
                 else if(key==KEY_ENTER){if(notes_action==1)create_note();else if(note_count>0)open_note(note_selected);else notes_action=1;}
                 else if(ch=='n'||ch=='N')create_note();
-                else if(key==KEY_BACKSPACE||key==KEY_ESC)active_app=-1;
+                else if(is_back(key))active_app=-1;
             } else {
-                if(key==KEY_ESC||(key==KEY_ENTER&&fn_lock)){save_note();note_editing=false;refresh_notes();notes_action=0;}
+                if(is_back(key)||(key==KEY_ENTER&&fn_lock)){save_note();note_editing=false;refresh_notes();notes_action=0;}
                 else if(is_up(key)){note_scroll=std::max(0,note_scroll-1);}
                 else if(is_down(key)){note_scroll=std::min(std::max(0,note_visual_line_count()-6),note_scroll+1);}
                 else if(key==KEY_BACKSPACE){if(note_length>0){--note_length;note_buffer[note_length]=0;save_note();}}
@@ -1873,8 +1882,8 @@ void poll_keyboard() {
                 else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;note_scroll=std::max(0,note_visual_line_count()-6);save_note();}
             }
         } else if(active_app==2){
-            if(key==KEY_ESC)active_app=-1;
-            else if(key==KEY_BACKSPACE||key==KEY_DELETE){if(key==KEY_DELETE){calc_buffer[0]=0;calc_length=0;calc_showing_result=false;}else if(calc_length>0){calc_buffer[--calc_length]=0;calc_showing_result=false;}calc_error=false;calc_error_text[0]=0;}
+            if(is_back(key))active_app=-1;
+            else if(key==KEY_BACKSPACE){if(calc_length>0){calc_buffer[--calc_length]=0;calc_showing_result=false;}calc_error=false;calc_error_text[0]=0;}
             else if(key==KEY_ENTER){calc_showing_result=calculate();}
             else if(calc_length<(int)sizeof(calc_buffer)-2){
                 char op=0;
@@ -1884,20 +1893,20 @@ void poll_keyboard() {
             }
         } else if(active_app==3){
             if(bluetooth_screen){
-                if(key==KEY_ESC||key==KEY_BACKSPACE){stop_ble_scan();bluetooth_screen=false;}
+                if(is_back(key)){stop_ble_scan();bluetooth_screen=false;}
                 else if(key==KEY_ENTER){stop_ble_scan();start_ble_scan();}
                 else if(is_up(key)){ble_device_scroll=std::max(0,ble_device_scroll-1);}
                 else if(is_down(key)){ble_device_scroll=std::min(std::max(0,ble_device_count-5),ble_device_scroll+1);}
                 else if(ch=='m'||ch=='M'){ble_complex_mode=!ble_complex_mode;stop_ble_scan();start_ble_scan();}
             } else if(wifi_setup_step>0){
-                if(key==KEY_ESC){wifi_setup_step=0;}
+                if(is_back(key)){wifi_setup_step=0;}
                 else if(wifi_setup_step==3){
                     if(is_up(key)){wifi_network_selected=std::max(0,wifi_network_selected-1);if(wifi_network_selected<wifi_network_scroll)wifi_network_scroll=wifi_network_selected;}
                     else if(is_down(key)){wifi_network_selected=std::min(std::max(0,wifi_network_count-1),wifi_network_selected+1);if(wifi_network_selected>=wifi_network_scroll+5)wifi_network_scroll=wifi_network_selected-4;}
                     else if(ch=='r'||ch=='R'){scan_wifi_networks();}
-                    else if(key==KEY_BACKSPACE){wifi_setup_step=0;}
+                    else if(is_back(key)){wifi_setup_step=0;}
                     else if(ch=='m'||ch=='M'){wifi_ssid_input[0]=0;wifi_password_input[0]=0;wifi_setup_step=1;}
-                    else if(key==KEY_ENTER&&wifi_network_count>0){
+                    else if(key==KEY_ENTER&&wifi_network_count>0&&wifi_network_selected>=0&&wifi_network_selected<wifi_network_count){
                         std::snprintf(wifi_ssid_input,sizeof(wifi_ssid_input),"%s",wifi_networks[wifi_network_selected]);
                         wifi_password_input[0]=0;
                         if(wifi_network_auth[wifi_network_selected]==WIFI_AUTH_OPEN){
@@ -1930,7 +1939,7 @@ void poll_keyboard() {
                 else if(settings_selection==2){load_wifi_settings();wifi_setup_step=3;scan_wifi_networks();}
                 else if(settings_selection==3){bluetooth_screen=true;if(!start_ble_scan())ui_dirty=true;}
                 else if(settings_selection==4){sound_enabled=!sound_enabled;save_settings();}
-            } else if(key==KEY_ESC||key==KEY_BACKSPACE)active_app=-1;
+            } else if(is_back(key))active_app=-1;
         } else if(active_app==5){
             if(is_back(key))active_app=-1;
             else if(store_loading){std::snprintf(store_message,sizeof(store_message),"PLEASE WAIT - LOADING");}
@@ -1974,7 +1983,7 @@ void poll_keyboard() {
             if(is_back(key)){package_running=false;active_app=package_return_app;}
             else if(key==KEY_ENTER){package_counter=std::min(999999,package_counter+package_increment);}
         } else if(active_app==6){
-            if(key==KEY_ESC||key==KEY_BACKSPACE)active_app=-1;
+            if(is_back(key))active_app=-1;
         } else if(active_app==7){
             if(key==KEY_ENTER){
                 if(timer_running){
@@ -2007,7 +2016,7 @@ void poll_keyboard() {
             else if(is_right(key)&&snake_dx==0){snake_dx=1;snake_dy=0;}
             else if(game_over&&key==KEY_ENTER){game_started=false;}
         }
-        if(key==KEY_ESC&&active_app!=0&&active_app!=1&&active_app!=2&&active_app!=3&&active_app!=5&&active_app!=6&&active_app!=11)active_app=-1;
+        if(is_back(key)&&active_app>=0&&active_app!=0&&active_app!=1&&active_app!=2&&active_app!=3&&active_app!=5&&active_app!=6&&active_app!=11)active_app=-1;
     }
     std::uint8_t status=0;if(keyboard_read(0x02,&status)==ESP_OK&&(status&0x01))keyboard_write(0x02,0x01);
 }} // namespace
