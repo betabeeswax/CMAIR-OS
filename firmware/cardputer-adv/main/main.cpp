@@ -155,6 +155,10 @@ bool launcher_foldered[kAppCount]={};
 bool organizer_mode=false, folder_open=false;
 int organizer_selected=0, folder_selected=0;
 int installed_package_count=0;
+char music_files[16][64]={}; int music_count=0,music_selected=0,music_scroll=0;
+volatile bool music_playing=false,music_stop_requested=false;
+bool wifi_test_running=false,wifi_test_done=false,wifi_test_online=false;
+int wifi_test_rssi=0,wifi_test_http=0; char wifi_test_ip[16]="0.0.0.0";
 char installed_package_ids[16][64]={};
 char installed_package_titles[16][64]={};
 alignas(4) std::uint16_t framebuffer[kWidth * kHeight];
@@ -657,7 +661,7 @@ bool start_wifi_connect(const char* ssid,const char* password) {
     return true;
 }
 bool connect_wifi_from_sd() {
-    if(wifi_started){
+    if(wifi_driver_ready||wifi_started){
         wifi_ap_record_t current{};
         if(esp_wifi_sta_get_ap_info(&current)==ESP_OK){
             esp_netif_ip_info_t ip{};
@@ -970,6 +974,58 @@ void install_store_package() {
     std::snprintf(store_message,sizeof(store_message),"INSTALLED - ENTER TO OPEN");
 }
 void seed_store() { /* Store entries are fetched from the official GitHub catalogue. */ }
+void wifi_test_task(void*) {
+    wifi_test_done=false;wifi_test_online=false;wifi_test_http=0;
+    if(!connect_wifi_from_sd()) {wifi_test_running=false;wifi_test_done=true;ui_dirty=true;vTaskDelete(nullptr);return;}
+    wifi_ap_record_t ap{};if(esp_wifi_sta_get_ap_info(&ap)==ESP_OK)wifi_test_rssi=ap.rssi;
+    std::snprintf(wifi_test_ip,sizeof(wifi_test_ip),"%s",wifi_ip_text);
+    esp_http_client_config_t cfg={};cfg.url="https://connectivitycheck.gstatic.com/generate_204";
+    cfg.timeout_ms=12000;cfg.crt_bundle_attach=esp_crt_bundle_attach;
+    esp_http_client_handle_t client=esp_http_client_init(&cfg);
+    if(client){const esp_err_t e=esp_http_client_perform(client);wifi_test_http=esp_http_client_get_status_code(client);
+        wifi_test_online=e==ESP_OK&&(wifi_test_http==204||wifi_test_http==200);esp_http_client_cleanup(client);}
+    wifi_test_running=false;wifi_test_done=true;ui_dirty=true;vTaskDelete(nullptr);
+}
+void start_wifi_test() {
+    if(wifi_test_running)return;wifi_test_running=true;wifi_test_done=false;wifi_test_online=false;
+    if(xTaskCreate(wifi_test_task,"wifi-test",6144,nullptr,4,nullptr)!=pdPASS){wifi_test_running=false;wifi_test_done=true;std::snprintf(store_message,sizeof(store_message),"WIFI TEST TASK FAILED");}
+    ui_dirty=true;
+}
+void refresh_music_files() {
+    music_count=0;music_selected=0;music_scroll=0;if(!sd_ready)return;
+    mkdir("/sdcard/MCAI-OS",0775);mkdir("/sdcard/MCAI-OS/music",0775);
+    DIR* d=opendir("/sdcard/MCAI-OS/music");if(!d)return;struct dirent* e;
+    while((e=readdir(d))&&music_count<16){size_t n=std::strlen(e->d_name);if(n<5)continue;const char* ext=e->d_name+n-4;
+        if(std::strcmp(ext,".wav")&&std::strcmp(ext,".WAV"))continue;
+        std::snprintf(music_files[music_count++],64,"%.63s",e->d_name);}
+    closedir(d);
+}
+void music_play_task(void*) {
+    char path[128]={};if(music_selected>=0&&music_selected<music_count)std::snprintf(path,sizeof(path),"/sdcard/MCAI-OS/music/%.63s",music_files[music_selected]);
+    FILE* f=path[0]?std::fopen(path,"rb"):nullptr;bool valid=false;
+    if(f){unsigned char h[12]={};if(std::fread(h,1,12,f)==12&&!std::memcmp(h,"RIFF",4)&&!std::memcmp(h+8,"WAVE",4)){
+        unsigned short format=0,channels=0,bits=0;unsigned int rate=0;unsigned char ch[8];
+        while(std::fread(ch,1,8,f)==8){unsigned int size=(unsigned int)ch[4]|((unsigned int)ch[5]<<8)|((unsigned int)ch[6]<<16)|((unsigned int)ch[7]<<24);
+            if(!std::memcmp(ch,"fmt ",4)&&size>=16){unsigned char fmt[16];if(std::fread(fmt,1,16,f)!=16)break;
+                format=(unsigned short)(fmt[0]|(fmt[1]<<8));channels=(unsigned short)(fmt[2]|(fmt[3]<<8));
+                rate=(unsigned int)fmt[4]|((unsigned int)fmt[5]<<8)|((unsigned int)fmt[6]<<16)|((unsigned int)fmt[7]<<24);
+                bits=(unsigned short)(fmt[14]|(fmt[15]<<8));if(size>16)fseek(f,(long)(size-16),SEEK_CUR);
+            }else if(!std::memcmp(ch,"data",4)){valid=format==1&&channels==2&&rate==44100&&bits==16;
+                if(valid){unsigned char buf[1024];size_t n;while(!music_stop_requested&&(n=std::fread(buf,1,sizeof(buf),f))>0){size_t wrote=0;if(i2s_write(I2S_NUM_0,buf,n,&wrote,pdMS_TO_TICKS(250))!=ESP_OK)break;}}
+                break;
+            }else fseek(f,(long)size,SEEK_CUR);if(size&1)fseek(f,1,SEEK_CUR);
+        }}std::fclose(f);}
+    if(!valid)std::snprintf(store_message,sizeof(store_message),"NEED 44.1KHZ 16-BIT STEREO WAV");
+    music_playing=false;music_stop_requested=false;ui_dirty=true;vTaskDelete(nullptr);
+}
+void start_music_playback() {
+    if(music_playing){music_stop_requested=true;return;}
+    if(!audio_ready){std::snprintf(store_message,sizeof(store_message),"AUDIO NOT READY");return;}
+    if(music_selected<0||music_selected>=music_count)return;
+    music_stop_requested=false;music_playing=true;
+    if(xTaskCreate(music_play_task,"music-player",4096,nullptr,4,nullptr)!=pdPASS){music_playing=false;std::snprintf(store_message,sizeof(store_message),"MUSIC TASK FAILED");}
+    ui_dirty=true;
+}
 void open_selected_file() {
     if(file_count==0)return;
     char path[240];std::snprintf(path,sizeof(path),"%s/%s",current_dir,file_names[file_selected]);
@@ -1146,6 +1202,22 @@ void render_app() {
         if(tmv.tm_year<120){draw_text("TIME NOT SYNCED",8,33,2,accent);draw_text("SET WIFI IN SETTINGS",8,67,1,ink);}
         else {std::snprintf(line,sizeof(line),"%02d:%02d:%02d",tmv.tm_hour,tmv.tm_min,tmv.tm_sec);draw_text("SYSTEM CLOCK",8,30,1,accent);draw_text(line,8,55,3,ink);}
         draw_text("ESC: BACK",8,111,1,muted);break;}
+    case 15:
+        draw_text("WI-FI CONNECTION TEST",8,29,1,accent);
+        draw_text(wifi_test_running?"RUNNING TEST...":(wifi_test_done?(wifi_test_online?"INTERNET OK":"INTERNET FAILED"):"PRESS ENTER TO TEST"),8,48,1,wifi_test_online?accent:ink);
+        draw_text(wifi_connected?"CONNECTED":"NOT CONNECTED",8,66,1,ink);
+        std::snprintf(line,sizeof(line),"IP %.15s",wifi_test_ip);draw_text(line,8,80,1,muted);
+        std::snprintf(line,sizeof(line),"SIGNAL %d dBm",wifi_test_rssi);draw_text(line,8,94,1,muted);
+        std::snprintf(line,sizeof(line),"HTTP %d",wifi_test_http);draw_text(line,8,108,1,muted);
+        draw_text("ENTER TEST  R RETEST  BKSP BACK",8,124,1,muted);break;
+    case 16:
+        draw_text("MUSIC / SD CARD WAV",8,27,1,accent);
+        for(int i=0;i<5;i++){int ix=music_scroll+i;if(ix>=music_count)break;
+            fill_round_rect(8,42+i*13,224,12,2,ix==music_selected?(dark_theme?rgb565(64,82,54):rgb565(205,231,190)):bg);
+            draw_text(music_files[ix],14,44+i*13,1,ix==music_selected?accent:ink);}
+        if(music_count==0)draw_text("ADD WAV FILES TO MCAI-OS/MUSIC",8,65,1,muted);
+        draw_text(music_playing?"PLAYING - ENTER TO STOP":"ENTER PLAY / STOP",8,111,1,music_playing?accent:muted);
+        draw_text("UP/DN SELECT  R RESCAN  BKSP BACK",8,124,1,muted);break;
     case 13: {
         const std::int64_t elapsed=stopwatch_elapsed_us+(stopwatch_running?(esp_timer_get_time()-stopwatch_started_us):0);
         const int centis=(int)(elapsed/10000);
@@ -1669,6 +1741,15 @@ void poll_keyboard() {
             if(is_back(key)){if(!ota_running)active_app=-1;}
             else if(key==KEY_ENTER&&!ota_running)start_ota_update();
             else if((ch=='r'||ch=='R')&&!ota_running)start_ota_update();
+        } else if(active_app==15){
+            if(is_back(key))active_app=-1;
+            else if(key==KEY_ENTER||ch=='r'||ch=='R')start_wifi_test();
+        } else if(active_app==16){
+            if(is_back(key)){if(music_playing)music_stop_requested=true;active_app=-1;}
+            else if(is_up(key)){if(music_selected>0)--music_selected;if(music_selected<music_scroll)music_scroll=music_selected;}
+            else if(is_down(key)){if(music_selected+1<music_count)++music_selected;if(music_selected>=music_scroll+5)music_scroll=music_selected-4;}
+            else if(key==KEY_ENTER)start_music_playback();
+            else if(ch=='r'||ch=='R')refresh_music_files();
         } else if(active_app==17){
             if(is_back(key)){package_running=false;active_app=package_return_app;}
             else if(key==KEY_ENTER){package_counter=std::min(999999,package_counter+package_increment);}
