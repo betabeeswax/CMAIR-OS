@@ -620,6 +620,7 @@ bool init_bluetooth() {
             wifi_radio_stopped_for_ble=(stop==ESP_OK);
             wifi_connected=false;
             std::snprintf(wifi_ip_text,sizeof(wifi_ip_text),"0.0.0.0");
+            if(wifi_sta_netif){esp_netif_ip_info_t empty_ip{};esp_netif_set_ip_info(wifi_sta_netif,&empty_ip);}
         } else ESP_LOGW(kTag,"Wi-Fi stop before BLE: %s",esp_err_to_name(stop));
     }
     const size_t free_internal=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
