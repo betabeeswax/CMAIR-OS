@@ -871,7 +871,7 @@ void ota_update_task(void*) {
     std::snprintf(ota_message,sizeof(ota_message),"DOWNLOADING UPDATE...");
     ui_dirty=true;
     esp_http_client_config_t http_cfg={};
-    http_cfg.url="https://github.com/betabeeswax/MCAI-OS/releases/download/v0.1.0-alpha/cmair-os-cardputer-adv-app.bin";
+    http_cfg.url="https://github.com/betabeeswax/MCAI-OS/releases/download/v0.1.0-alpha/MCAI-OS-app.bin";
     http_cfg.crt_bundle_attach=esp_crt_bundle_attach;
     http_cfg.timeout_ms=45000;
     esp_https_ota_config_t ota_cfg={};
