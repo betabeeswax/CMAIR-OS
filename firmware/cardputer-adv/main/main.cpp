@@ -43,6 +43,9 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#define MINIMP3_IMPLEMENTATION
+#include "minimp3.h"
+
 namespace {
 constexpr char kTag[] = "MCAI-OS";
 constexpr int kWidth = 240;
@@ -158,6 +161,10 @@ int organizer_selected=0, folder_selected=0;
 int installed_package_count=0;
 char music_files[16][64]={}; int music_count=0,music_selected=0,music_scroll=0;
 volatile bool music_playing=false,music_stop_requested=false;
+mp3dec_t music_mp3_decoder{};
+std::uint8_t music_mp3_input[8192]{};
+mp3d_sample_t music_mp3_pcm[MINIMP3_MAX_SAMPLES_PER_FRAME]{};
+std::int16_t music_mp3_output[4096]{};
 bool wifi_test_running=false,wifi_test_done=false,wifi_test_online=false;
 int wifi_test_rssi=0,wifi_test_http=0; char wifi_test_ip[16]="0.0.0.0";
 char wifi_test_error[32]="NOT TESTED";
@@ -391,13 +398,17 @@ bool save_note() {
         std::snprintf(store_message,sizeof(store_message),"INSERT SD / CHECK NOTE");return false;
     }
     // Direct FAT write avoids the temp/rename/fsync sequence that can fail on SD.
-    FILE* f=std::fopen(note_filename,"w");
+    FILE* f=std::fopen(note_filename,"wb");
     if(!f){std::snprintf(store_message,sizeof(store_message),"NOTE FILE OPEN FAILED");return false;}
     const size_t written=std::fwrite(note_buffer,1,(size_t)note_length,f);
     const bool flush_ok=std::fflush(f)==0;
     const bool close_ok=std::fclose(f)==0;
     if(written!=(size_t)note_length||!flush_ok||!close_ok){
         std::snprintf(store_message,sizeof(store_message),"NOTE WRITE FAILED");return false;
+    }
+    struct stat verify{};
+    if(stat(note_filename,&verify)!=0||verify.st_size!=note_length){
+        std::snprintf(store_message,sizeof(store_message),"NOTE VERIFY FAILED");return false;
     }
     std::snprintf(store_message,sizeof(store_message),"NOTE SAVED");return true;
 }
@@ -778,14 +789,23 @@ bool load_store_catalogue() {
     for(int wait=0;wifi_connecting&&wait<120;wait++)vTaskDelay(pdMS_TO_TICKS(250));
     if(wifi_connecting){std::snprintf(store_message,sizeof(store_message),"WIFI STILL CONNECTING");return false;}
     if(!connect_wifi_from_sd())return false;
+    // HTTPS certificate validation needs a real clock. Wi-Fi can have an IP
+    // while NTP is still syncing, so wait before contacting GitHub.
+    start_time_sync();
+    for(int wait=0;wait<24&&std::time(nullptr)<1577836800;wait++)
+        vTaskDelay(pdMS_TO_TICKS(500));
+    if(std::time(nullptr)<1577836800){
+        std::snprintf(store_message,sizeof(store_message),"TIME NOT SYNCED - RETRY");return false;
+    }
     esp_http_client_config_t cfg={};
     cfg.url="https://raw.githubusercontent.com/betabeeswax/MCAI-OS-APPS/main/catalogue.json";
-    cfg.event_handler=catalogue_http_event;cfg.timeout_ms=20000;cfg.buffer_size=2048;cfg.crt_bundle_attach=esp_crt_bundle_attach;
+    cfg.event_handler=catalogue_http_event;cfg.timeout_ms=30000;cfg.buffer_size=4096;
+    cfg.crt_bundle_attach=esp_crt_bundle_attach;cfg.keep_alive_enable=false;
     esp_http_client_handle_t client=esp_http_client_init(&cfg);
     if(!client){std::snprintf(store_message,sizeof(store_message),"HTTP INIT FAILED");return false;}
     esp_err_t result=esp_http_client_perform(client);
     int status=esp_http_client_get_status_code(client);esp_http_client_cleanup(client);
-    if(result!=ESP_OK){std::snprintf(store_message,sizeof(store_message),"NETWORK ERROR - RETRY");return false;}
+    if(result!=ESP_OK){std::snprintf(store_message,sizeof(store_message),"HTTPS FAIL: %.20s",esp_err_to_name(result));return false;}
     if(status!=200){std::snprintf(store_message,sizeof(store_message),"GITHUB HTTP %d",status);return false;}
     if(catalogue_length==0){std::snprintf(store_message,sizeof(store_message),"EMPTY CATALOGUE RESPONSE");return false;}
     if(catalogue_length>=sizeof(catalogue_buffer)-1){std::snprintf(store_message,sizeof(store_message),"CATALOGUE TOO LARGE");return false;}
@@ -1073,31 +1093,113 @@ void start_wifi_test() {
     if(xTaskCreate(wifi_test_task,"wifi-test",6144,nullptr,4,nullptr)!=pdPASS){wifi_test_running=false;wifi_test_done=true;std::snprintf(store_message,sizeof(store_message),"WIFI TEST TASK FAILED");}
     ui_dirty=true;
 }
+bool music_name_is_mp3(const char* name) {
+    if(!name)return false;
+    const size_t n=std::strlen(name);
+    if(n<4)return false;
+    char ext[5]={};
+    for(int i=0;i<4;i++)ext[i]=(char)std::tolower((unsigned char)name[n-4+i]);
+    return std::strcmp(ext,".mp3")==0;
+}
 void refresh_music_files() {
-    music_count=0;music_selected=0;music_scroll=0;if(!sd_ready)return;
+    music_count=0;music_selected=0;music_scroll=0;
+    if(!sd_ready){std::snprintf(store_message,sizeof(store_message),"INSERT SD CARD");return;}
     mkdir("/sdcard/MCAI-OS",0775);mkdir("/sdcard/MCAI-OS/music",0775);
-    DIR* d=opendir("/sdcard/MCAI-OS/music");if(!d)return;struct dirent* e;
-    while((e=readdir(d))&&music_count<16){size_t n=std::strlen(e->d_name);if(n<5)continue;const char* ext=e->d_name+n-4;
-        if(std::strcmp(ext,".wav")&&std::strcmp(ext,".WAV"))continue;
-        std::snprintf(music_files[music_count++],64,"%.63s",e->d_name);}
+    DIR* d=opendir("/sdcard/MCAI-OS/music");
+    if(!d){std::snprintf(store_message,sizeof(store_message),"CANNOT OPEN MUSIC FOLDER");return;}
+    struct dirent* e;
+    while((e=readdir(d))&&music_count<16){
+        size_t n=std::strlen(e->d_name);if(n<4)continue;
+        const char* ext=e->d_name+n-4;
+        if(std::strcmp(ext,".wav")&&std::strcmp(ext,".WAV")&&!music_name_is_mp3(e->d_name))continue;
+        std::snprintf(music_files[music_count++],64,"%.63s",e->d_name);
+    }
     closedir(d);
 }
-void music_play_task(void*) {
-    char path[128]={};if(music_selected>=0&&music_selected<music_count)std::snprintf(path,sizeof(path),"/sdcard/MCAI-OS/music/%.63s",music_files[music_selected]);
-    FILE* f=path[0]?std::fopen(path,"rb"):nullptr;bool valid=false;
-    if(f){unsigned char h[12]={};if(std::fread(h,1,12,f)==12&&!std::memcmp(h,"RIFF",4)&&!std::memcmp(h+8,"WAVE",4)){
+void music_play_mp3(FILE* f) {
+    mp3dec_init(&music_mp3_decoder);
+    size_t input_len=0;
+    bool eof=false,decoded=false;
+    while(!music_stop_requested){
+        if(!eof&&input_len<sizeof(music_mp3_input)){
+            const size_t got=std::fread(music_mp3_input+input_len,1,sizeof(music_mp3_input)-input_len,f);
+            input_len+=got;
+            if(got==0)eof=true;
+        }
+        int consumed=0;
+        while(!music_stop_requested&&input_len-(size_t)consumed>=4){
+            mp3dec_frame_info_t info{};
+            const int samples=mp3dec_decode_frame(&music_mp3_decoder,
+                music_mp3_input+consumed,(int)(input_len-(size_t)consumed),
+                music_mp3_pcm,&info);
+            if(info.frame_bytes<=0)break;
+            consumed+=info.frame_bytes;
+            if(samples<=0||info.hz<=0||(info.channels!=1&&info.channels!=2))continue;
+            decoded=true;
+            const int output_frames=std::min(4096/2,(samples*44100+info.hz-1)/info.hz);
+            for(int base=0;base<output_frames&&!music_stop_requested;base+=256){
+                const int count=std::min(256,output_frames-base);
+                for(int i=0;i<count;i++){
+                    const int source=std::min(samples-1,((base+i)*info.hz)/44100);
+                    const int left=music_mp3_pcm[source*info.channels];
+                    const int right=info.channels==2?music_mp3_pcm[source*2+1]:left;
+                    music_mp3_output[i*2]=(std::int16_t)left;
+                    music_mp3_output[i*2+1]=(std::int16_t)right;
+                }
+                size_t written=0;
+                if(i2s_write(I2S_NUM_0,music_mp3_output,(size_t)count*4,&written,pdMS_TO_TICKS(500))!=ESP_OK)break;
+            }
+        }
+        if(consumed>0){
+            input_len-=(size_t)consumed;
+            if(input_len)std::memmove(music_mp3_input,music_mp3_input+consumed,input_len);
+        }
+        if(eof){
+            if(consumed==0||input_len<4)break;
+        }else if(input_len==sizeof(music_mp3_input)&&consumed==0){
+            // Recover from corrupt data without letting a bad file stall playback.
+            std::memmove(music_mp3_input,music_mp3_input+1,--input_len);
+        }
+    }
+    if(!decoded&&!music_stop_requested)std::snprintf(store_message,sizeof(store_message),"INVALID OR UNSUPPORTED MP3");
+}
+void music_play_wav(FILE* f) {
+    bool valid=false;
+    unsigned char h[12]={};
+    if(std::fread(h,1,12,f)==12&&!std::memcmp(h,"RIFF",4)&&!std::memcmp(h+8,"WAVE",4)){
         unsigned short format=0,channels=0,bits=0;unsigned int rate=0;unsigned char ch[8];
-        while(std::fread(ch,1,8,f)==8){unsigned int size=(unsigned int)ch[4]|((unsigned int)ch[5]<<8)|((unsigned int)ch[6]<<16)|((unsigned int)ch[7]<<24);
-            if(!std::memcmp(ch,"fmt ",4)&&size>=16){unsigned char fmt[16];if(std::fread(fmt,1,16,f)!=16)break;
+        while(std::fread(ch,1,8,f)==8){
+            unsigned int size=(unsigned int)ch[4]|((unsigned int)ch[5]<<8)|((unsigned int)ch[6]<<16)|((unsigned int)ch[7]<<24);
+            if(!std::memcmp(ch,"fmt ",4)&&size>=16){
+                unsigned char fmt[16];if(std::fread(fmt,1,16,f)!=16)break;
                 format=(unsigned short)(fmt[0]|(fmt[1]<<8));channels=(unsigned short)(fmt[2]|(fmt[3]<<8));
                 rate=(unsigned int)fmt[4]|((unsigned int)fmt[5]<<8)|((unsigned int)fmt[6]<<16)|((unsigned int)fmt[7]<<24);
                 bits=(unsigned short)(fmt[14]|(fmt[15]<<8));if(size>16)fseek(f,(long)(size-16),SEEK_CUR);
-            }else if(!std::memcmp(ch,"data",4)){valid=format==1&&channels==2&&rate==44100&&bits==16;
-                if(valid){unsigned char buf[1024];size_t n;while(!music_stop_requested&&(n=std::fread(buf,1,sizeof(buf),f))>0){size_t wrote=0;if(i2s_write(I2S_NUM_0,buf,n,&wrote,pdMS_TO_TICKS(250))!=ESP_OK)break;}}
+            }else if(!std::memcmp(ch,"data",4)){
+                valid=format==1&&channels==2&&rate==44100&&bits==16;
+                if(valid){
+                    unsigned char buf[1024];size_t n;
+                    while(!music_stop_requested&&(n=std::fread(buf,1,sizeof(buf),f))>0){
+                        size_t wrote=0;if(i2s_write(I2S_NUM_0,buf,n,&wrote,pdMS_TO_TICKS(250))!=ESP_OK)break;
+                    }
+                }
                 break;
-            }else fseek(f,(long)size,SEEK_CUR);if(size&1)fseek(f,1,SEEK_CUR);
-        }}std::fclose(f);}
+            }else {fseek(f,(long)size,SEEK_CUR);if(size&1)fseek(f,1,SEEK_CUR);}
+        }
+    }
     if(!valid)std::snprintf(store_message,sizeof(store_message),"NEED 44.1KHZ 16-BIT STEREO WAV");
+}
+void music_play_task(void*) {
+    char path[128]={};
+    if(music_selected>=0&&music_selected<music_count)
+        std::snprintf(path,sizeof(path),"/sdcard/MCAI-OS/music/%.63s",music_files[music_selected]);
+    FILE* f=path[0]?std::fopen(path,"rb"):nullptr;
+    if(!f)std::snprintf(store_message,sizeof(store_message),"CANNOT OPEN MUSIC FILE");
+    else {
+        if(music_name_is_mp3(path))music_play_mp3(f);
+        else music_play_wav(f);
+        std::fclose(f);
+    }
     music_playing=false;music_stop_requested=false;ui_dirty=true;vTaskDelete(nullptr);
 }
 void start_music_playback() {
@@ -1105,7 +1207,7 @@ void start_music_playback() {
     if(!audio_ready){std::snprintf(store_message,sizeof(store_message),"AUDIO NOT READY");return;}
     if(music_selected<0||music_selected>=music_count)return;
     music_stop_requested=false;music_playing=true;
-    if(xTaskCreate(music_play_task,"music-player",4096,nullptr,4,nullptr)!=pdPASS){music_playing=false;std::snprintf(store_message,sizeof(store_message),"MUSIC TASK FAILED");}
+    if(xTaskCreate(music_play_task,"music-player",8192,nullptr,4,nullptr)!=pdPASS){music_playing=false;std::snprintf(store_message,sizeof(store_message),"MUSIC TASK FAILED");}
     ui_dirty=true;
 }
 void open_selected_file() {
@@ -1293,11 +1395,11 @@ void render_app() {
         std::snprintf(line,sizeof(line),"HTTP %d",wifi_test_http);draw_text(line,8,108,1,muted);
         draw_text("ENTER TEST  R RETEST  BKSP BACK",8,124,1,muted);break;
     case 16:
-        draw_text("MUSIC / SD CARD WAV",8,27,1,accent);
+        draw_text("MUSIC / MP3 + WAV",8,27,1,accent);
         for(int i=0;i<5;i++){int ix=music_scroll+i;if(ix>=music_count)break;
             fill_round_rect(8,42+i*13,224,12,2,ix==music_selected?(dark_theme?rgb565(64,64,64):rgb565(205,205,205)):bg);
             draw_text(music_files[ix],14,44+i*13,1,ix==music_selected?accent:ink);}
-        if(music_count==0)draw_text("ADD WAV FILES TO MCAI-OS/MUSIC",8,65,1,muted);
+        if(music_count==0)draw_text("ADD MP3/WAV TO MCAI-OS/MUSIC",8,65,1,muted);
         draw_text(music_playing?"PLAYING - ENTER TO STOP":"ENTER PLAY / STOP",8,111,1,music_playing?accent:muted);
         draw_text("UP/DN SELECT  R RESCAN  BKSP BACK",8,124,1,muted);break;
     case 13: {
