@@ -917,6 +917,7 @@ void refresh_installed_packages() {
     }
     closedir(d);
 }
+void refresh_music_files();
 void start_launcher_item(int item) {
     if(item==-1){folder_open=true;folder_selected=0;return;}
     if(item>=kAppCount){
