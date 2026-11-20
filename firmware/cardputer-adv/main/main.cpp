@@ -1293,7 +1293,7 @@ void render_app() {
     case 16:
         draw_text("MUSIC / SD CARD WAV",8,27,1,accent);
         for(int i=0;i<5;i++){int ix=music_scroll+i;if(ix>=music_count)break;
-            fill_round_rect(8,42+i*13,224,12,2,ix==music_selected?(dark_theme?rgb565(64,82,54):rgb565(205,231,190)):bg);
+            fill_round_rect(8,42+i*13,224,12,2,ix==music_selected?(dark_theme?rgb565(64,64,64):rgb565(205,205,205)):bg);
             draw_text(music_files[ix],14,44+i*13,1,ix==music_selected?accent:ink);}
         if(music_count==0)draw_text("ADD WAV FILES TO MCAI-OS/MUSIC",8,65,1,muted);
         draw_text(music_playing?"PLAYING - ENTER TO STOP":"ENTER PLAY / STOP",8,111,1,music_playing?accent:muted);
@@ -1343,7 +1343,7 @@ void render_app() {
     case 11:
         if(!game_started){
             draw_text("GAME LIBRARY",8,26,1,accent);
-            fill_round_rect(8,39,224,38,5,rgb565(25,43,62));
+            fill_round_rect(8,39,224,38,5,rgb565(32,32,32));
             fill_round_rect(13,44,30,28,4,rgb565(190,190,190));
             draw_text("S",23,52,2,bg);
             draw_text("SNAKE",51,45,1,ink);
