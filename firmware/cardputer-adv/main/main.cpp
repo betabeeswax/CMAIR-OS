@@ -1026,16 +1026,22 @@ void render_note_page(int x,int y,int visible,std::uint16_t color) {
     }
 }
 void render_app() {
-    const auto white=rgb565(244,248,255), muted=rgb565(150,166,190), accent=rgb565(87,231,190);
-    const auto bg=dark_theme?rgb565(11,16,29):rgb565(235,241,247);
-    const auto ink=dark_theme?white:rgb565(20,30,45);
+    const auto white=dark_theme?rgb565(241,247,255):rgb565(22,34,49);
+    const auto muted=dark_theme?rgb565(137,157,181):rgb565(92,111,132);
+    const auto accent=rgb565(126,217,87);
+    const auto bg=dark_theme?rgb565(9,14,25):rgb565(235,241,248);
+    const auto ink=white;
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
-    draw_text("MCAI",8,7,1,accent);draw_text("OS",39,10,1,muted);
-    if(caps_lock)draw_text("CAP",164,7,1,accent);
-    if(shift_held)draw_text("SHF",184,7,1,accent);
-    if(fn_lock)draw_text("FN",214,7,1,accent);
-    if(active_app==15)draw_text(package_title,100,7,1,ink);else draw_text(kApps[active_app],100,7,1,ink);
-    fill_rect(0,19,kWidth,1,rgb565(44,59,78));
+    fill_rect(0,0,kWidth,22,dark_theme?rgb565(16,25,39):rgb565(218,229,239));
+    fill_round_rect(7,4,14,14,4,accent);
+    draw_text("M",11,8,1,rgb565(8,18,25));
+    if(active_app==15)draw_text(package_title,28,7,1,ink);
+    else if(active_app>=0&&active_app<kAppCount)draw_text(kApps[active_app],28,7,1,ink);
+    else draw_text("MCAI APP",28,7,1,ink);
+    if(caps_lock)draw_text("CAP",174,7,1,accent);
+    if(shift_held)draw_text("SHF",194,7,1,accent);
+    if(fn_lock)draw_text("FN",218,7,1,accent);
+    fill_rect(0,22,kWidth,1,dark_theme?rgb565(42,57,76):rgb565(197,210,224));
     char line[64];
     switch(active_app) {
     case 0:
@@ -1208,64 +1214,87 @@ void render_app() {
 }
 
 void render_home() {
-    const auto bg=rgb565(11,16,29), card=rgb565(22,31,49), accent=rgb565(126,217,87);
-    const auto white=rgb565(244,248,255), muted=rgb565(150,166,190), selected=rgb565(37,68,75);
+    const auto bg=dark_theme?rgb565(9,14,25):rgb565(235,241,248);
+    const auto panel_bg=dark_theme?rgb565(20,29,45):rgb565(255,255,255);
+    const auto panel_alt=dark_theme?rgb565(27,39,58):rgb565(222,232,242);
+    const auto ink=dark_theme?rgb565(241,247,255):rgb565(22,34,49);
+    const auto muted=dark_theme?rgb565(137,157,181):rgb565(92,111,132);
+    const auto accent=rgb565(126,217,87);
+    const auto cyan=rgb565(82,210,211);
+    const auto purple=rgb565(168,137,255);
+    const auto selected=dark_theme?rgb565(38,65,66):rgb565(210,239,218);
     if(active_app>=0) { render_app(); return; }
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
-    fill_rect(0,0,kWidth,47,rgb565(126,217,87));
-    const char keys[]="MCAI";
-    for(int i=0;i<4;i++) {
-        int x=5+i*58;
-        fill_round_rect(x+2,5,55,27,6,rgb565(0,0,0));
-        fill_round_rect(x,3,53,26,6,rgb565(0,0,0));
-        fill_round_rect(x+2,5,49,22,5,rgb565(254,254,254));
-        char letter[2]={keys[i],0};draw_text(letter,x+17,10,2,rgb565(0,0,0));
-    }
-    fill_rect(4,34,232,12,rgb565(0,0,0));fill_rect(6,36,228,8,rgb565(18,0,120));
-    draw_text("OS",111,37,1,white);
-    draw_text(sd_ready?"SD READY":"NO SD",8,50,1,sd_ready?accent:muted);
-    draw_text(wifi_connected?"WIFI ON":"WIFI OFF",142,50,1,wifi_connected?accent:muted);
-    if(caps_lock)draw_text("CAP",166,50,1,accent);
-    if(shift_held)draw_text("SHF",188,50,1,accent);
-    if(fn_lock)draw_text("FN",218,50,1,accent);
-    if(organizer_mode){
-        draw_text("ORGANIZE APPS",8,62,1,accent);
+
+    // MCAI-OS v2 visual system: compact status bar, app tiles and clear focus.
+    fill_rect(0,0,kWidth,25,dark_theme?rgb565(16,25,39):rgb565(218,229,239));
+    fill_round_rect(7,5,15,15,4,accent);
+    draw_text("M",11,9,1,rgb565(8,18,25));
+    draw_text("MCAI",28,6,1,ink);
+    draw_text("OS",54,6,1,accent);
+    draw_text(sd_ready?"SD":"NO SD",164,6,1,sd_ready?accent:muted);
+    draw_text(wifi_connected?"WIFI":"OFF",198,6,1,wifi_connected?cyan:muted);
+    if(caps_lock)draw_text("C",224,6,1,accent);
+    if(fn_lock)draw_text("F",233,6,1,purple);
+    fill_rect(0,25,kWidth,1,dark_theme?rgb565(42,57,76):rgb565(197,210,224));
+
+    if(organizer_mode) {
+        draw_text("EDIT HOME",9,31,1,accent);
         const int page=organizer_selected/kAppsPerPage;
-        for(int row=0;row<4;row++){
-            const int pos=page*kAppsPerPage+row;if(pos>=kAppCount)break;
-            const int id=launcher_order[pos],y=73+row*12;
-            fill_rect(7,y,226,11,pos==organizer_selected?selected:card);
-            char label[38];std::snprintf(label,sizeof(label),"%s%s",kApps[id],launcher_foldered[id]?"  IN FOLDER":"");
-            draw_text(label,15,y+2,1,pos==organizer_selected?accent:white);
+        for(int row=0;row<4;row++) {
+            const int pos=page*kAppsPerPage+row;
+            if(pos>=kAppCount)break;
+            const int id=launcher_order[pos], y=44+row*17;
+            fill_round_rect(7,y,226,15,3,pos==organizer_selected?selected:panel_bg);
+            draw_text(kApps[id],14,y+4,1,pos==organizer_selected?accent:ink);
+            if(launcher_foldered[id])draw_text("FOLDER",184,y+4,1,muted);
         }
-        draw_text("O/ESC DONE  F FOLDER",8,124,1,accent);
-        draw_text("LEFT/RIGHT MOVE",145,124,1,muted);
-    } else if(folder_open){
-        draw_text("MY FOLDER",8,62,1,accent);
+        draw_text("O/ESC DONE   F TO FOLDER",8,124,1,muted);
+    } else if(folder_open) {
+        draw_text("MY FOLDER",9,31,1,accent);
         const int total=launcher_folder_count();
         if(folder_selected>=total)folder_selected=std::max(0,total-1);
         const int page=folder_selected/kAppsPerPage;
-        for(int row=0;row<4;row++){
-            const int pos=page*kAppsPerPage+row;if(pos>=total)break;
-            const int id=launcher_folder_item(pos),y=73+row*12;
-            fill_rect(7,y,226,11,pos==folder_selected?selected:card);
-            draw_text(kApps[id],15,y+2,1,pos==folder_selected?accent:white);
+        for(int row=0;row<4;row++) {
+            const int pos=page*kAppsPerPage+row;
+            if(pos>=total)break;
+            const int id=launcher_folder_item(pos), y=44+row*18;
+            fill_round_rect(7,y,226,16,4,pos==folder_selected?selected:panel_bg);
+            draw_text(kApps[id],15,y+5,1,pos==folder_selected?accent:ink);
+            draw_text("OPEN",190,y+5,1,muted);
         }
-        draw_text("ENTER OPEN  BKSP BACK",8,124,1,accent);
+        draw_text("ENTER OPEN   BKSP BACK",8,124,1,muted);
     } else {
         const int total=launcher_root_count();
         if(selected_app>=total)selected_app=std::max(0,total-1);
-        const int page=selected_app/kAppsPerPage,pages=std::max(1,(total+kAppsPerPage-1)/kAppsPerPage);
-        draw_text("APP LAUNCHER",8,62,1,muted);
-        for(int row=0;row<4;row++){
-            const int pos=page*kAppsPerPage+row;if(pos>=total)break;
-            const int item=launcher_root_item(pos),y=73+row*12;
-            fill_rect(7,y,226,11,pos==selected_app?selected:card);
-            if(pos==selected_app)fill_rect(7,y,3,11,accent);
-            draw_text(launcher_item_name(item),15,y+2,1,pos==selected_app?accent:white);
+        const int page=selected_app/kAppsPerPage;
+        const int pages=std::max(1,(total+kAppsPerPage-1)/kAppsPerPage);
+        draw_text("YOUR APPS",9,31,1,muted);
+        const int colors[4]={0,1,2,3};
+        for(int tile=0;tile<4;tile++) {
+            const int pos=page*kAppsPerPage+tile;
+            if(pos>=total)continue;
+            const int item=launcher_root_item(pos);
+            const int x=(tile%2)?123:7;
+            const int y=(tile/2)?78:43;
+            const bool active=pos==selected_app;
+            const auto tile_bg=active?selected:((tile%2)?panel_alt:panel_bg);
+            fill_round_rect(x,y,110,31,5,tile_bg);
+            fill_round_rect(x+5,y+6,19,19,5,active?accent:(tile==1?cyan:tile==2?purple:muted));
+            const char* label=launcher_item_name(item);
+            char icon[2]={label&&label[0]?label[0]:'?',0};
+            draw_text(icon,x+11,y+12,1,rgb565(8,18,25));
+            char short_name[15]={};
+            if(label)std::snprintf(short_name,sizeof(short_name),"%.13s",label);
+            draw_text(short_name,x+30,y+8,1,active?accent:ink);
+            draw_text(active?"SELECTED":"APP",x+30,y+19,1,muted);
+            if(active)fill_rect(x+4,y+28,102,2,accent);
         }
-        char p[20];std::snprintf(p,sizeof(p),"PAGE %d/%d",page+1,pages);draw_text(p,8,124,1,accent);
-        draw_text("O: ORGANIZE  ENTER: OPEN",105,124,1,muted);
+        char page_label[20];
+        std::snprintf(page_label,sizeof(page_label),"PAGE %d / %d",page+1,pages);
+        draw_text(page_label,8,119,1,accent);
+        draw_text("ARROWS MOVE",100,119,1,muted);
+        draw_text("ENTER OPEN   O EDIT",8,130,1,muted);
     }
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
 }
@@ -1706,15 +1735,8 @@ extern "C" void app_main(void) {
     init_display();
     init_keyboard();
     draw_mcaI_logo_splash();
-    // Never trap the device on the splash screen if the keyboard controller
-    // fails to initialize or its first key event is missed.
-    keypress_count=0;
-    const std::int64_t boot_wait_until=esp_timer_get_time()+8000000;
-    while(keyboard_ready && keypress_count==0 && esp_timer_get_time()<boot_wait_until) {
-        poll_keyboard();
-        if(gpio_get_level(GPIO_NUM_0)==0) break;
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
+    // Short, non-interactive splash: boot always continues to the real launcher.
+    vTaskDelay(pdMS_TO_TICKS(350));
     init_audio();init_sd_card();load_settings();load_launcher_layout();refresh_installed_packages();seed_store();apply_brightness();
     const esp_err_t ota_mark=esp_ota_mark_app_valid_cancel_rollback();
     if(ota_mark!=ESP_OK&&ota_mark!=ESP_ERR_NOT_FOUND)ESP_LOGW(kTag,"OTA validation mark: %s",esp_err_to_name(ota_mark));
