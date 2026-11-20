@@ -1839,25 +1839,23 @@ void poll_keyboard() {
                 if(timer_running){
                     timer_running=false;
                     timer_seconds=std::max(0,(int)((timer_end_us-esp_timer_get_time()+999999)/1000000));
-                    std::snprintf(timer_input,sizeof(timer_input),"%02d:%02d:%02d",timer_seconds/3600,(timer_seconds/60)%60,timer_seconds%60);
+                    format_timer_fields(timer_seconds/3600,(timer_seconds/60)%60,timer_seconds%60);
                 } else {
-                    int h=0,m=0,sec=0,fields=0;
-                    const bool has_colon=std::strchr(timer_input,':')!=nullptr;
-                    if(has_colon)fields=std::sscanf(timer_input,"%d:%d:%d",&h,&m,&sec);
-                    else fields=std::sscanf(timer_input,"%d",&sec);
-                    if(has_colon&&fields==2){sec=m;m=h;h=0;}
-                    const bool valid=has_colon?(fields>=2&&h>=0&&h<=99&&m>=0&&m<60&&sec>=0&&sec<60):(fields==1&&sec>=0&&sec<=359999);
-                    if(valid){
-                        timer_seconds=has_colon?h*3600+m*60+sec:sec;
+                    int h=0,m=0,sec=0;
+                    if(parse_timer_fields(h,m,sec)){
+                        timer_seconds=h*3600+m*60+sec;
                         if(timer_seconds>0){timer_end_us=esp_timer_get_time()+(std::int64_t)timer_seconds*1000000;timer_running=true;}
-                        else std::snprintf(store_message,sizeof(store_message),"ENTER A TIME FIRST");
-                    } else std::snprintf(store_message,sizeof(store_message),"USE HH:MM:SS OR SECONDS");
+                        else std::snprintf(store_message,sizeof(store_message),"SET A TIME ABOVE ZERO");
+                    } else std::snprintf(store_message,sizeof(store_message),"USE HH:MM:SS");
                 }
-            } else if(!timer_running&&key==KEY_BACKSPACE){size_t n=std::strlen(timer_input);if(n)timer_input[n-1]=0;}
+            } else if(!timer_running&&is_left(key))timer_field=(timer_field+2)%3;
+            else if(!timer_running&&is_right(key))timer_field=(timer_field+1)%3;
+            else if(!timer_running&&is_up(key))adjust_timer_field(1);
+            else if(!timer_running&&is_down(key))adjust_timer_field(-1);
+            else if(!timer_running&&key==KEY_BACKSPACE){size_t n=std::strlen(timer_input);if(n)timer_input[n-1]=0;}
             else if(!timer_running&&(ch=='c'||ch=='C'))timer_input[0]=0;
-            else if(!timer_running&&(ch=='r'||ch=='R'))std::snprintf(timer_input,sizeof(timer_input),"00:01:00");
+            else if(!timer_running&&(ch=='r'||ch=='R')){timer_field=2;format_timer_fields(0,1,0);}
             else if(!timer_running&&((ch>='0'&&ch<='9')||ch==':')&&std::strlen(timer_input)<8){size_t n=std::strlen(timer_input);timer_input[n]=ch;timer_input[n+1]=0;}
-
         } else if(active_app==8){/* Every key press is counted above. */}
         else if(active_app==11){
             if(is_back(key)){if(game_started)game_started=false;else active_app=-1;}
