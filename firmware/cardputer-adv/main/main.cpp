@@ -365,7 +365,16 @@ bool save_note() {
     FILE* f=std::fopen(temp_path,"w");if(!f){std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;}
     const size_t written=std::fwrite(note_buffer,1,(size_t)note_length,f);
     const bool flush_ok=std::fflush(f)==0;const bool sync_ok=flush_ok&&fsync(fileno(f))==0;const bool close_ok=std::fclose(f)==0;
-    if(written!=(size_t)note_length||!sync_ok||!close_ok||rename(temp_path,note_filename)!=0){unlink(temp_path);std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;}
+    if(written!=(size_t)note_length||!sync_ok||!close_ok){unlink(temp_path);std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;}
+    // FAT filesystems may refuse rename-over-existing; keep a backup while swapping.
+    char backup_path[128]={};std::snprintf(backup_path,sizeof(backup_path),"%s.bak",note_filename);
+    struct stat existing{};const bool had_previous=stat(note_filename,&existing)==0;
+    if(had_previous){unlink(backup_path);if(rename(note_filename,backup_path)!=0){unlink(temp_path);std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;}}
+    if(rename(temp_path,note_filename)!=0){
+        if(had_previous)rename(backup_path,note_filename);
+        unlink(temp_path);std::snprintf(store_message,sizeof(store_message),"NOTE SAVE FAILED");return false;
+    }
+    if(had_previous)unlink(backup_path);
     std::snprintf(store_message,sizeof(store_message),"NOTE SAVED");return true;
 }
 void open_note(int index) {
