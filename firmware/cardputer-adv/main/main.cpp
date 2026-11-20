@@ -128,7 +128,8 @@ bool ota_running=false;
 char ota_message[48]="PRESS ENTER TO CHECK FOR UPDATES";
 char store_message[40]="ADD WIFI.CFG ON SD"; bool wifi_started=false, catalogue_loaded=false, ntp_started=false;
 char catalogue_buffer[32768]={}; size_t catalogue_length=0;
-bool package_running=false; int package_return_app=5; char package_title[64]=""; char package_subtitle[96]=""; char package_id[64]=""; int package_counter=0, package_increment=1;
+bool package_running=false; int package_return_app=5; char package_title[64]=""; char package_subtitle[96]=""; char package_id[64]=""; int package_counter=0, package_increment=1; int package_game=0; char package_result[32]="";
+bool speedtest_running=false; char speedtest_status[48]="PRESS ENTER TO TEST"; double speedtest_down_mbps=0.0,speedtest_up_mbps=0.0; volatile std::size_t speedtest_received=0;
 char clock_input[8] = {};
 int clock_len = 0;
 int timer_seconds = 60;
@@ -146,7 +147,7 @@ bool dark_theme = true;
 bool ui_dirty=true;
 bool boot_button_was_pressed = false;
 constexpr int kAppsPerPage = 4;
-constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT","STOPWATCH","OS UPDATER"};
+constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT","STOPWATCH","OS UPDATER","SPEED TEST"};
 constexpr int kAppCount = sizeof(kApps) / sizeof(kApps[0]);
 int launcher_order[kAppCount]={};
 bool launcher_foldered[kAppCount]={};
@@ -192,24 +193,8 @@ const std::uint8_t* glyph(char c) {
         {0x3C,0x4A,0x49,0x49,0x30},{0x01,0x71,0x09,0x05,0x03},
         {0x36,0x49,0x49,0x49,0x36},{0x06,0x49,0x49,0x29,0x1E}
     };
-    // Standard 5x7 lowercase glyphs. Each value is one vertical column;
-    // keep the same 7-pixel height and 6-pixel character advance as capitals.
-    static const std::uint8_t lowercase[26][5] = {
-        {0x20,0x54,0x54,0x54,0x78}, {0x7F,0x48,0x44,0x44,0x38},
-        {0x38,0x44,0x44,0x44,0x20}, {0x38,0x44,0x44,0x48,0x7F},
-        {0x38,0x54,0x54,0x54,0x18}, {0x08,0x7E,0x09,0x01,0x02},
-        {0x0C,0x52,0x52,0x52,0x3E}, {0x7F,0x08,0x04,0x04,0x78},
-        {0x00,0x44,0x7D,0x40,0x00}, {0x20,0x40,0x44,0x3D,0x00},
-        {0x7F,0x10,0x28,0x44,0x00}, {0x00,0x41,0x7F,0x40,0x00},
-        {0x7C,0x04,0x18,0x04,0x78}, {0x7C,0x08,0x04,0x04,0x78},
-        {0x38,0x44,0x44,0x44,0x38}, {0x7C,0x14,0x14,0x14,0x08},
-        {0x08,0x14,0x14,0x18,0x7C}, {0x7C,0x08,0x04,0x04,0x08},
-        {0x48,0x54,0x54,0x54,0x20}, {0x04,0x3F,0x44,0x40,0x20},
-        {0x3C,0x40,0x40,0x20,0x7C}, {0x1C,0x20,0x40,0x20,0x1C},
-        {0x3C,0x40,0x30,0x40,0x3C}, {0x44,0x28,0x10,0x28,0x44},
-        {0x0C,0x50,0x50,0x50,0x3C}, {0x44,0x64,0x54,0x4C,0x44}
-    };
-    if (c >= 'a' && c <= 'z') return lowercase[c - 'a'];
+    // Render lowercase input using the stable uppercase 5x7 font.
+    if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
     if (c >= 'A' && c <= 'Z') return letters[c - 'A'];
     if (c >= '0' && c <= '9') return digits[c - '0'];
     static const std::uint8_t dash[5]={8,8,8,8,8}, plus[5]={8,8,62,8,8};
@@ -706,6 +691,71 @@ void ota_update_task(void*) {
     ESP_LOGE(kTag,"OTA update failed: %s",esp_err_to_name(err));
     vTaskDelete(nullptr);
 }
+esp_err_t speedtest_http_event(esp_http_client_event_t* evt) {
+    if(evt&&evt->event_id==HTTP_EVENT_ON_DATA&&evt->data_len>0)speedtest_received+=(std::size_t)evt->data_len;
+    return ESP_OK;
+}
+void speedtest_task(void*) {
+    speedtest_down_mbps=0.0;speedtest_up_mbps=0.0;
+    std::snprintf(speedtest_status,sizeof(speedtest_status),"CHECKING WI-FI...");
+    ui_dirty=true;
+    if(!wifi_connected&&!connect_wifi_from_sd()){
+        std::snprintf(speedtest_status,sizeof(speedtest_status),"WI-FI FAILED - CHECK SETTINGS");
+        speedtest_running=false;ui_dirty=true;vTaskDelete(nullptr);return;
+    }
+    esp_http_client_config_t cfg={};
+    cfg.url="https://speed.cloudflare.com/__down?bytes=524288";
+    cfg.event_handler=speedtest_http_event;
+    cfg.timeout_ms=30000;
+    cfg.buffer_size=2048;
+    cfg.crt_bundle_attach=esp_crt_bundle_attach;
+    esp_http_client_handle_t client=esp_http_client_init(&cfg);
+    if(!client){std::snprintf(speedtest_status,sizeof(speedtest_status),"HTTP INIT FAILED");speedtest_running=false;ui_dirty=true;vTaskDelete(nullptr);return;}
+    speedtest_received=0;
+    std::snprintf(speedtest_status,sizeof(speedtest_status),"TESTING DOWNLOAD...");
+    ui_dirty=true;
+    const std::int64_t down_start=esp_timer_get_time();
+    esp_err_t result=esp_http_client_perform(client);
+    const std::int64_t down_elapsed=esp_timer_get_time()-down_start;
+    const std::size_t down_bytes=speedtest_received;
+    const int down_status=esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    if(result!=ESP_OK||down_status!=200||down_elapsed<=0||down_bytes==0){
+        std::snprintf(speedtest_status,sizeof(speedtest_status),"DOWNLOAD TEST FAILED");
+        speedtest_running=false;ui_dirty=true;vTaskDelete(nullptr);return;
+    }
+    speedtest_down_mbps=((double)down_bytes*8.0)/(double)down_elapsed;
+    std::snprintf(speedtest_status,sizeof(speedtest_status),"TESTING UPLOAD...");
+    ui_dirty=true;
+    const std::size_t upload_bytes=32768;
+    char* upload=(char*)std::calloc(upload_bytes,1);
+    if(!upload){std::snprintf(speedtest_status,sizeof(speedtest_status),"LOW MEMORY - UPLOAD SKIPPED");speedtest_running=false;ui_dirty=true;vTaskDelete(nullptr);return;}
+    cfg.url="https://speed.cloudflare.com/__up";
+    client=esp_http_client_init(&cfg);
+    if(!client){std::free(upload);std::snprintf(speedtest_status,sizeof(speedtest_status),"UPLOAD INIT FAILED");speedtest_running=false;ui_dirty=true;vTaskDelete(nullptr);return;}
+    esp_http_client_set_method(client,HTTP_METHOD_POST);
+    esp_http_client_set_header(client,"Content-Type","application/octet-stream");
+    esp_http_client_set_post_field(client,upload,(int)upload_bytes);
+    const std::int64_t up_start=esp_timer_get_time();
+    result=esp_http_client_perform(client);
+    const std::int64_t up_elapsed=esp_timer_get_time()-up_start;
+    const int up_status=esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);std::free(upload);
+    if(result==ESP_OK&&(up_status==200||up_status==204)&&up_elapsed>0)
+        speedtest_up_mbps=((double)upload_bytes*8.0)/(double)up_elapsed;
+    if(speedtest_up_mbps>0.0)std::snprintf(speedtest_status,sizeof(speedtest_status),"TEST COMPLETE");
+    else std::snprintf(speedtest_status,sizeof(speedtest_status),"UPLOAD TEST FAILED");
+    speedtest_running=false;ui_dirty=true;vTaskDelete(nullptr);
+}
+void start_speedtest() {
+    if(speedtest_running)return;
+    speedtest_running=true;
+    std::snprintf(speedtest_status,sizeof(speedtest_status),"STARTING...");
+    ui_dirty=true;
+    if(xTaskCreate(speedtest_task,"mcai-speedtest",8192,nullptr,4,nullptr)!=pdPASS){
+        speedtest_running=false;std::snprintf(speedtest_status,sizeof(speedtest_status),"TASK START FAILED");ui_dirty=true;
+    }
+}
 void start_ota_update() {
     if(ota_running)return;
     ota_running=true;
@@ -819,11 +869,19 @@ bool launch_installed_package(const char* id) {
     cJSON* subtitle=ui?cJSON_GetObjectItemCaseSensitive(ui,"subtitle"):nullptr;
     cJSON* initial=ui?cJSON_GetObjectItemCaseSensitive(ui,"initial"):nullptr;
     cJSON* increment=ui?cJSON_GetObjectItemCaseSensitive(ui,"increment"):nullptr;
+    cJSON* game=ui?cJSON_GetObjectItemCaseSensitive(ui,"game"):nullptr;
+    int game_type=0;
+    if(cJSON_IsString(game)){
+      if(std::strcmp(game->valuestring,"dice")==0)game_type=1;
+      else if(std::strcmp(game->valuestring,"coin")==0)game_type=2;
+      else if(std::strcmp(game->valuestring,"lucky-seven")==0)game_type=3;
+    }
+    bool game_valid=!game||(cJSON_IsString(game)&&game_type>0);
     bool valid=cJSON_IsString(fmt)&&std::strcmp(fmt->valuestring,"mcai-app-v1")==0&&
       cJSON_IsString(pid)&&std::strcmp(pid->valuestring,id)==0&&
       cJSON_IsString(target)&&std::strcmp(target->valuestring,"cardputer-adv")==0&&
       cJSON_IsObject(ui)&&cJSON_IsString(title)&&cJSON_IsString(subtitle)&&
-      cJSON_IsNumber(initial)&&cJSON_IsNumber(increment)&&
+      cJSON_IsNumber(initial)&&cJSON_IsNumber(increment)&&game_valid&&
       initial->valuedouble>=-999999&&initial->valuedouble<=999999&&
       increment->valuedouble>=1&&increment->valuedouble<=1000;
     if(valid){
@@ -832,7 +890,8 @@ bool launch_installed_package(const char* id) {
       std::snprintf(package_subtitle,sizeof(package_subtitle),"%s",subtitle->valuestring);
       package_counter=(int)initial->valuedouble;
       package_increment=(int)increment->valuedouble;
-      package_running=true;active_app=15;
+      package_game=game_type;package_result[0]=0;
+      package_running=true;active_app=16;
     }
     cJSON_Delete(root);return valid;
 }
@@ -901,8 +960,14 @@ void refresh_installed_packages() {
         if(n<6||std::strcmp(e->d_name+n-5,".json")!=0)continue;
         char path[160];std::snprintf(path,sizeof(path),"/sdcard/MCAI-OS/apps/%.63s",e->d_name);
         FILE* f=std::fopen(path,"r");if(!f)continue;
-        char data[4096]={};const size_t bytes=std::fread(data,1,sizeof(data)-1,f);std::fclose(f);if(!bytes)continue;
-        cJSON* root=cJSON_Parse(data);if(!root)continue;
+        // Keep the package JSON buffer on the heap. This function runs during
+        // app_main startup, where a 4 KB stack buffer can exhaust the ESP main
+        // task stack once filesystem and JSON parsing call frames are included.
+        char* data=static_cast<char*>(std::calloc(1,4096));
+        if(!data){std::fclose(f);ESP_LOGW(kTag,"Not enough heap to scan installed app");continue;}
+        const size_t bytes=std::fread(data,1,4095,f);std::fclose(f);
+        if(!bytes){std::free(data);continue;}
+        cJSON* root=cJSON_Parse(data);std::free(data);if(!root)continue;
         cJSON* id=cJSON_GetObjectItemCaseSensitive(root,"id");
         cJSON* ui=cJSON_GetObjectItemCaseSensitive(root,"ui");
         cJSON* title=ui?cJSON_GetObjectItemCaseSensitive(ui,"title"):nullptr;
@@ -1034,7 +1099,7 @@ void render_app() {
     if(caps_lock)draw_text("CAP",164,7,1,accent);
     if(shift_held)draw_text("SHF",184,7,1,accent);
     if(fn_lock)draw_text("FN",214,7,1,accent);
-    if(active_app==15)draw_text(package_title,100,7,1,ink);else draw_text(kApps[active_app],100,7,1,ink);
+    if(active_app==16)draw_text(package_title,100,7,1,ink);else draw_text(kApps[active_app],100,7,1,ink);
     fill_rect(0,19,kWidth,1,rgb565(44,59,78));
     char line[64];
     switch(active_app) {
@@ -1175,10 +1240,35 @@ void render_app() {
         draw_text(ota_running?"PLEASE KEEP DEVICE POWERED":"ENTER: CHECK / INSTALL",8,111,1,accent);
         draw_text("ESC: BACK",8,124,1,muted);
         break;
-    case 15: {
-        char count[32];std::snprintf(count,sizeof(count),"%d",package_counter);
-        draw_text(package_subtitle,8,30,1,muted);draw_text(count,8,55,3,accent);
-        draw_text("ENTER: +1",8,94,1,ink);draw_text("BACKSPACE: STORE",8,111,1,muted);break;
+    case 15:
+        draw_text("INTERNET SPEED TEST",8,27,1,accent);
+        fill_round_rect(8,39,224,55,5,rgb565(25,43,62));
+        draw_text(speedtest_status,15,47,1,ink);
+        std::snprintf(line,sizeof(line),"DOWN %.2f Mbps",speedtest_down_mbps);draw_text(line,15,62,1,accent);
+        std::snprintf(line,sizeof(line),"UP   %.2f Mbps",speedtest_up_mbps);draw_text(line,15,77,1,accent);
+        draw_text(speedtest_running?"TEST RUNNING...":"ENTER: START  R: RETEST",8,108,1,muted);
+        draw_text("ESC: BACK",8,124,1,muted);
+        break;
+    case 16: {
+        if(package_game==1){
+            draw_text("DICE ROLLER",8,29,1,accent);
+            draw_text(package_result[0]?package_result:"PRESS ENTER TO ROLL",8,55,2,ink);
+            draw_text("ENTER: ROLL AGAIN",8,96,1,muted);
+        } else if(package_game==2){
+            draw_text("COIN FLIP",8,29,1,accent);
+            draw_text(package_result[0]?package_result:"HEADS OR TAILS?",8,55,2,ink);
+            draw_text("ENTER: FLIP AGAIN",8,96,1,muted);
+        } else if(package_game==3){
+            draw_text("LUCKY SEVEN",8,29,1,accent);
+            draw_text(package_result[0]?package_result:"PRESS ENTER TO PICK",8,55,2,ink);
+            std::snprintf(line,sizeof(line),"LUCKY HITS: %d",package_counter);draw_text(line,8,84,1,accent);
+            draw_text("ENTER: PICK NUMBER",8,104,1,muted);
+        } else {
+            char count[32];std::snprintf(count,sizeof(count),"%d",package_counter);
+            draw_text(package_subtitle,8,30,1,muted);draw_text(count,8,55,3,accent);
+            draw_text("ENTER: +1",8,94,1,ink);
+        }
+        draw_text("BACKSPACE: BACK",8,124,1,muted);break;
     }
     case 11:
         if(!game_started){
@@ -1640,8 +1730,16 @@ void poll_keyboard() {
             else if(key==KEY_ENTER&&!ota_running)start_ota_update();
             else if((ch=='r'||ch=='R')&&!ota_running)start_ota_update();
         } else if(active_app==15){
+            if(is_back(key)){if(!speedtest_running)active_app=-1;}
+            else if((key==KEY_ENTER||ch=='r'||ch=='R')&&!speedtest_running)start_speedtest();
+        } else if(active_app==16){
             if(is_back(key)){package_running=false;active_app=package_return_app;}
-            else if(key==KEY_ENTER){package_counter=std::min(999999,package_counter+package_increment);}
+            else if(key==KEY_ENTER){
+                if(package_game==1){int roll=(int)(esp_random()%6)+1;std::snprintf(package_result,sizeof(package_result),"ROLLED: %d",roll);package_counter++;}
+                else if(package_game==2){std::snprintf(package_result,sizeof(package_result),"%s",(esp_random()&1)?"HEADS":"TAILS");package_counter++;}
+                else if(package_game==3){int n=(int)(esp_random()%10);std::snprintf(package_result,sizeof(package_result),"YOU GOT: %d",n);if(n==7)package_counter++;}
+                else package_counter=std::min(999999,package_counter+package_increment);
+            }
         } else if(active_app==6){
             if(key==KEY_ESC||key==KEY_BACKSPACE)active_app=-1;
         } else if(active_app==7){
@@ -1683,7 +1781,12 @@ void poll_keyboard() {
     std::uint8_t status=0;if(keyboard_read(0x02,&status)==ESP_OK&&(status&0x01))keyboard_write(0x02,0x01);
 }} // namespace
 
-extern "C" void app_main(void) {
+// Run the operating system on its own task instead of ESP-IDF's small
+// app_main task. The UI, JSON parser and filesystem drivers need a larger,
+// predictable stack during boot and while apps are running.
+static void mcai_os_task(void* parameter) {
+    (void)parameter;
+
     ESP_LOGI(kTag,"Starting MCAI-OS Cardputer ADV");
     // Set up the ADV backlight before touching the LCD. GPIO38 must not be
     // driven as a plain HIGH output: it is a shared power/backlight rail.
@@ -1704,17 +1807,11 @@ extern "C" void app_main(void) {
     channel.hpoint=0;
     ESP_ERROR_CHECK(ledc_channel_config(&channel));
     init_display();
-    init_keyboard();
     draw_mcaI_logo_splash();
-    // Never trap the device on the splash screen if the keyboard controller
-    // fails to initialize or its first key event is missed.
-    keypress_count=0;
-    const std::int64_t boot_wait_until=esp_timer_get_time()+8000000;
-    while(keyboard_ready && keypress_count==0 && esp_timer_get_time()<boot_wait_until) {
-        poll_keyboard();
-        if(gpio_get_level(GPIO_NUM_0)==0) break;
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
+    // Use the earlier stable startup order: do not poll the keypad on the
+    // splash screen. Start the OS automatically, then initialize input.
+    vTaskDelay(pdMS_TO_TICKS(1100));
+    init_keyboard();
     init_audio();init_sd_card();load_settings();load_launcher_layout();refresh_installed_packages();seed_store();apply_brightness();
     const esp_err_t ota_mark=esp_ota_mark_app_valid_cancel_rollback();
     if(ota_mark!=ESP_OK&&ota_mark!=ESP_ERR_NOT_FOUND)ESP_LOGW(kTag,"OTA validation mark: %s",esp_err_to_name(ota_mark));
@@ -1745,5 +1842,21 @@ extern "C" void app_main(void) {
         if(old_app!=active_app||old_sel!=selected_app||clock_tick||active_app==7||active_app==11||active_app==13||active_app==5||ui_dirty){render_home();ui_dirty=false;if(active_app==6)last_clock_render_second=clock_second;}
         if(active_app==1&&note_editing&&note_length>0&&note_length%24==0)save_note();
         vTaskDelay(pdMS_TO_TICKS(60));
+    }
+}
+
+extern "C" void app_main(void) {
+    constexpr uint32_t kOsTaskStackBytes = 16384;
+    constexpr UBaseType_t kOsTaskPriority = 5;
+    const BaseType_t result = xTaskCreate(
+        mcai_os_task,
+        "mcai_os",
+        kOsTaskStackBytes,
+        nullptr,
+        kOsTaskPriority,
+        nullptr
+    );
+    if (result != pdPASS) {
+        ESP_LOGE(kTag, "Could not start MCAI-OS task");
     }
 }

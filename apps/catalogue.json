@@ -2,7 +2,7 @@
   "project": "MCAI-OS",
   "meaning": "M5Stack Cardputer but AI",
   "catalogueVersion": 1,
-  "totalApps": 109,
+  "totalApps": 114,
   "notes": [
     "MLC is the exact media-player name.",
     "App names are not prefixed with AIR.",
@@ -1088,6 +1088,69 @@
         "url": "https://raw.githubusercontent.com/betabeeswax/MCAI-OS-APPS/main/apps/tap-counter/app.json",
         "sha256": "1979ca3f5f9f2558a92753dcba0156e7b82d9186163f90b51f6b992451a03d97",
         "sizeBytes": 196
+      }
+    },
+    {
+      "id": "speed-test",
+      "name": "Speed Test",
+      "category": "Internet and communication",
+      "targets": [
+        "cardputer-adv"
+      ],
+      "status": "builtin"
+    },
+    {
+      "id": "os-updater",
+      "name": "OS Updater",
+      "category": "System and desktop",
+      "targets": [
+        "cardputer-adv"
+      ],
+      "status": "builtin"
+    },
+    {
+      "id": "dice-roller",
+      "name": "Dice Roller",
+      "category": "Games and gaming",
+      "targets": [
+        "cardputer-adv"
+      ],
+      "status": "available",
+      "package": {
+        "format": "mcai-app-v1",
+        "sha256": "61d2634c15a65d5df2d52ef1de1088ea0f8470697ba3b170f631da72c9646f85",
+        "sizeBytes": 211,
+        "url": "https://raw.githubusercontent.com/betabeeswax/MCAI-OS-APPS/main/apps/dice-roller/app.json"
+      }
+    },
+    {
+      "id": "coin-flip",
+      "name": "Coin Flip",
+      "category": "Games and gaming",
+      "targets": [
+        "cardputer-adv"
+      ],
+      "status": "available",
+      "package": {
+        "format": "mcai-app-v1",
+        "sha256": "ce0927ce814e906f456df4a95a75f62075dddaf697c339c82aad15205e4f1e49",
+        "sizeBytes": 203,
+        "url": "https://raw.githubusercontent.com/betabeeswax/MCAI-OS-APPS/main/apps/coin-flip/app.json"
+      }
+    },
+    {
+      "id": "lucky-seven",
+      "name": "Lucky Seven",
+      "category": "Games and gaming",
+      "targets": [
+        "cardputer-adv"
+      ],
+      "status": "available",
+      "package": {
+        "format": "mcai-app-v1",
+        "sha256": "74eead49ea910bb7fe8691b8038d19a88cb40f793b9cd9fd22abd48c3147f837",
+        "sizeBytes": 228,
+        "url": "https://raw.githubusercontent.com/betabeeswax/MCAI-OS-APPS/main/apps/lucky-seven/app.json"
       }
     }
   ]
