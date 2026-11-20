@@ -382,8 +382,9 @@ void refresh_notes() {
     }
     note_selected=std::min(note_selected,std::max(0,note_count-1));
     note_scroll=0;
-    notes_action=1;
-    std::snprintf(store_message,sizeof(store_message),"ADD A NOTE OR SELECT ONE BELOW");
+    // Open the list with a saved note selected when notes already exist.
+    notes_action=note_count>0?0:1;
+    std::snprintf(store_message,sizeof(store_message),note_count>0?"SAVED NOTES READY":"NO SAVED NOTES - ADD ONE");
 }
 bool save_note() {
     if(!sd_ready || !note_filename[0] || note_length<0 || note_length>=(int)sizeof(note_buffer)){
@@ -1642,16 +1643,21 @@ void poll_keyboard() {
         }
         std::uint8_t key=0;
         char ch=decode_key(row,col,shift_held!=caps_lock);
-        // The four physical arrow keys have secondary legends ; , . /.
-        // Without Fn they are navigation keys; with Fn they type their legends.
+        // The apostrophe key is Escape normally and types apostrophe with Fn.
+        // The four physical arrow keys navigate normally; Fn types their legends.
+        if(row==2&&col==12){if(fn_lock){ch='\\'';}else{key=KEY_ESC;ch=0;}}
         if(fn_lock){
-            if(row==0&&col==0){key=KEY_ESC;ch=0;} // Fn + backtick = Escape
-            else if(row==0&&col>=1&&col<=12){ch=0;std::snprintf(last_key_label,sizeof(last_key_label),"F%d",col);}
+            if(row==0&&col>=1&&col<=12){ch=0;std::snprintf(last_key_label,sizeof(last_key_label),"F%d",col);}
             else if(row==0&&col==13){key=KEY_DELETE;ch=0;}
-            else if(row==2&&col==11){key=KEY_UP;ch=0;}       // Fn + ;
-            else if(row==3&&col==10){key=KEY_LEFT;ch=0;}    // Fn + ,
-            else if(row==3&&col==11){key=KEY_DOWN;ch=0;}    // Fn + .
-            else if(row==3&&col==12){key=KEY_RIGHT;ch=0;}   // Fn + /
+            else if(row==2&&col==11){ch=';';key=0;}
+            else if(row==3&&col==10){ch=',';key=0;}
+            else if(row==3&&col==11){ch='.';key=0;}
+            else if(row==3&&col==12){ch='/';key=0;}
+        } else {
+            if(row==2&&col==11){key=KEY_UP;ch=0;}
+            else if(row==3&&col==10){key=KEY_LEFT;ch=0;}
+            else if(row==3&&col==11){key=KEY_DOWN;ch=0;}
+            else if(row==3&&col==12){key=KEY_RIGHT;ch=0;}
         }
         if(!key){
             if(row==0&&col==13)key=KEY_BACKSPACE;
