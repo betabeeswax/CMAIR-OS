@@ -29,3 +29,7 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
 # Enable automatic rollback if an OTA image fails to boot.
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Explicitly include trusted root certificates for GitHub HTTPS and OTA.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
