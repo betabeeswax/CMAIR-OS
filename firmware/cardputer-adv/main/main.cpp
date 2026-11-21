@@ -1133,11 +1133,15 @@ int store_builtin_index(const char* id) {
 }
 bool package_installed(const char* id) {
     char path[160];if(!package_path(path,sizeof(path),id))return false;
-    struct stat st{};return stat(path,&st)==0&&S_ISREG(st.st_mode);
+    struct stat st{};if(stat(path,&st)==0&&S_ISREG(st.st_mode))return true;
+    char legacy[160];std::snprintf(legacy,sizeof(legacy),"/sdcard/MCAI-OS/apps/%s.json",id);
+    return stat(legacy,&st)==0&&S_ISREG(st.st_mode);
 }
 bool launch_installed_package(const char* id) {
     char path[160];if(!sd_ready||!package_path(path,sizeof(path),id))return false;
-    FILE* f=std::fopen(path,"r");if(!f)return false;
+    FILE* f=std::fopen(path,"r");
+    if(!f){char legacy[160];std::snprintf(legacy,sizeof(legacy),"/sdcard/MCAI-OS/apps/%s.json",id);f=std::fopen(legacy,"r");}
+    if(!f)return false;
     char data[4096]={};size_t n=std::fread(data,1,sizeof(data)-1,f);std::fclose(f);
     if(n==0)return false;
     cJSON* root=cJSON_Parse(data);if(!root)return false;
@@ -1228,7 +1232,9 @@ void refresh_installed_packages() {
     struct dirent* e;
     while((e=readdir(d))!=nullptr&&installed_package_count<16){
         const size_t n=std::strlen(e->d_name);
-        if(n<9||std::strcmp(e->d_name+n-8,".airapps")!=0)continue;
+        const bool airapps=n>=8&&std::strcmp(e->d_name+n-8,".airapps")==0;
+        const bool legacy_json=n>=5&&std::strcmp(e->d_name+n-5,".json")==0;
+        if(!airapps&&!legacy_json)continue;
         char path[160];std::snprintf(path,sizeof(path),"/sdcard/MCAI-OS/apps/%.63s",e->d_name);
         FILE* f=std::fopen(path,"r");if(!f)continue;
         char data[4096]={};const size_t bytes=std::fread(data,1,sizeof(data)-1,f);std::fclose(f);if(!bytes)continue;
@@ -1519,6 +1525,16 @@ int note_visual_line_count() {
         else {if(col==35){++lines;col=0;}++col;}
     }
     return lines;
+}
+void ensure_note_cursor_visible() {
+    int line=0,col=0;
+    for(int i=0;i<note_cursor&&i<note_length;i++){
+        if(note_buffer[i]=='\n'){++line;col=0;}
+        else if(++col==35){++line;col=0;}
+    }
+    if(line<note_scroll)note_scroll=line;
+    else if(line>=note_scroll+6)note_scroll=line-5;
+    note_scroll=std::max(0,std::min(note_scroll,std::max(0,note_visual_line_count()-6)));
 }
 void render_note_page(int x,int y,int visible,std::uint16_t color) {
     int line=0,n=0;
@@ -2164,13 +2180,13 @@ void poll_keyboard() {
                 else if(is_back(key))active_app=-1;
             } else {
                 if(is_back(key)||(key==KEY_ENTER&&fn_active)){save_note();note_editing=false;refresh_notes();notes_action=0;}
-                else if(is_left(key)){if(note_cursor>0)--note_cursor;ui_dirty=true;}
-                else if(is_right(key)){if(note_cursor<note_length)++note_cursor;ui_dirty=true;}
+                else if(is_left(key)){if(note_cursor>0)--note_cursor;ensure_note_cursor_visible();ui_dirty=true;}
+                else if(is_right(key)){if(note_cursor<note_length)++note_cursor;ensure_note_cursor_visible();ui_dirty=true;}
                 else if(is_up(key)){note_scroll=std::max(0,note_scroll-1);ui_dirty=true;}
                 else if(is_down(key)){note_scroll=std::min(std::max(0,note_visual_line_count()-6),note_scroll+1);ui_dirty=true;}
-                else if(key==KEY_BACKSPACE){if(note_cursor>0){std::memmove(note_buffer+note_cursor-1,note_buffer+note_cursor,(size_t)(note_length-note_cursor)+1);--note_cursor;--note_length;save_note();ui_dirty=true;}}
-                else if(key==KEY_DELETE){if(note_cursor<note_length){std::memmove(note_buffer+note_cursor,note_buffer+note_cursor+1,(size_t)(note_length-note_cursor));--note_length;save_note();ui_dirty=true;}}
-                else if(key==KEY_ENTER&&note_length<(int)sizeof(note_buffer)-2){std::memmove(note_buffer+note_cursor+1,note_buffer+note_cursor,(size_t)(note_length-note_cursor)+1);note_buffer[note_cursor++]='\n';++note_length;note_scroll=std::max(0,note_visual_line_count()-6);save_note();ui_dirty=true;}
+                else if(key==KEY_BACKSPACE){if(note_cursor>0){std::memmove(note_buffer+note_cursor-1,note_buffer+note_cursor,(size_t)(note_length-note_cursor)+1);--note_cursor;--note_length;ensure_note_cursor_visible();save_note();ui_dirty=true;}}
+                else if(key==KEY_DELETE){if(note_cursor<note_length){std::memmove(note_buffer+note_cursor,note_buffer+note_cursor+1,(size_t)(note_length-note_cursor));--note_length;ensure_note_cursor_visible();save_note();ui_dirty=true;}}
+                else if(key==KEY_ENTER&&note_length<(int)sizeof(note_buffer)-2){std::memmove(note_buffer+note_cursor+1,note_buffer+note_cursor,(size_t)(note_length-note_cursor)+1);note_buffer[note_cursor++]='\n';++note_length;ensure_note_cursor_visible();save_note();ui_dirty=true;}
                 else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){std::memmove(note_buffer+note_cursor+1,note_buffer+note_cursor,(size_t)(note_length-note_cursor)+1);note_buffer[note_cursor++]=ch;++note_length;note_scroll=std::max(0,note_visual_line_count()-6);save_note();ui_dirty=true;}
             }
         } else if(active_app==2){
