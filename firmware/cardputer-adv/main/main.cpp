@@ -149,6 +149,16 @@ int store_count=0, store_selected=0, store_scroll=0;
 bool store_loading=false;
 bool ota_running=false;
 char ota_message[48]="PRESS ENTER TO CHECK FOR UPDATES";
+volatile int ota_http_status=0;
+volatile bool ota_http_connected=false;
+esp_err_t ota_http_event(esp_http_client_event_t* evt){
+    if(evt->event_id==HTTP_EVENT_ON_CONNECTED)ota_http_connected=true;
+    else if(evt->event_id==HTTP_EVENT_ON_HEADER){
+        const int status=esp_http_client_get_status_code(evt->client);
+        if(status>0)ota_http_status=status;
+    }
+    return ESP_OK;
+}
 char store_message[40]="ADD WIFI.CFG ON SD"; bool wifi_started=false, catalogue_loaded=false, ntp_started=false;
 char catalogue_buffer[32768]={}; size_t catalogue_length=0;
 bool package_running=false; int package_return_app=5; char package_title[64]=""; char package_subtitle[96]=""; char package_id[64]=""; int package_counter=0, package_increment=1;
@@ -920,14 +930,17 @@ void ota_update_task(void*) {
     esp_http_client_config_t http_cfg={};
     http_cfg.url="https://github.com/betabeeswax/MCAI-OS/releases/download/v0.1.0-alpha/MCAI-OS-app.bin";
     http_cfg.crt_bundle_attach=esp_crt_bundle_attach;
+    http_cfg.event_handler=ota_http_event;
     http_cfg.timeout_ms=90000;http_cfg.keep_alive_enable=false;http_cfg.disable_auto_redirect=false;http_cfg.max_redirection_count=8;http_cfg.buffer_size=2048;http_cfg.buffer_size_tx=1024;
     esp_https_ota_config_t ota_cfg={};
     ota_cfg.http_config=&http_cfg;
     esp_err_t err=ESP_FAIL;
     for(int attempt=0;attempt<3;attempt++){
+        ota_http_status=0;ota_http_connected=false;
         err=esp_https_ota(&ota_cfg);
         if(err==ESP_OK)break;
-        ESP_LOGW(kTag,"OTA attempt %d failed: %s",attempt+1,esp_err_to_name(err));
+        ESP_LOGW(kTag,"OTA attempt %d failed: %s connected=%d HTTP=%d",
+            attempt+1,esp_err_to_name(err),(int)ota_http_connected,(int)ota_http_status);
         configure_wifi_fallback_dns();
         if(attempt<2)vTaskDelay(pdMS_TO_TICKS(1500));
     }
@@ -937,7 +950,12 @@ void ota_update_task(void*) {
         vTaskDelay(pdMS_TO_TICKS(700));
         esp_restart();
     }
-    std::snprintf(ota_message,sizeof(ota_message),"UPDATE FAILED: %.24s",esp_err_to_name(err));
+    if(ota_http_status>0&&ota_http_status!=200)
+        std::snprintf(ota_message,sizeof(ota_message),"UPDATE HTTP %d", (int)ota_http_status);
+    else if(!ota_http_connected)
+        std::snprintf(ota_message,sizeof(ota_message),"UPDATE CONNECT FAILED");
+    else
+        std::snprintf(ota_message,sizeof(ota_message),"UPDATE TRANSFER: %.16s",esp_err_to_name(err));
     ota_running=false;ui_dirty=true;
     ESP_LOGE(kTag,"OTA update failed: %s",esp_err_to_name(err));
     vTaskDelete(nullptr);
