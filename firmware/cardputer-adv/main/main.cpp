@@ -1737,9 +1737,9 @@ void render_app() {
             const char* details[]={"ARCADE CLASSIC","GUESS 1 TO 9","ADD TWO NUMBERS"};
             for(int i=0;i<3;i++){
                 const int y=35+i*25;const bool sel=i==game_menu_selected;
-                fill_round_rect(7,y,226,22,4,sel?(dark_theme?rgb565(65,65,65):rgb565(205,205,205)):rgb565(25,25,25));
+                fill_round_rect(7,y,226,22,4,sel?rgb565(26,35,50):rgb565(15,20,25));
                 draw_text(games[i],14,y+3,1,sel?(rgb565(232,238,247)):ink);
-                draw_text(details[i],112,y+3,1,sel?(dark_theme?rgb565(255,255,255):rgb565(0,0,0)):muted);
+                draw_text(details[i],112,y+3,1,sel?rgb565(232,238,247):muted);
             }
             draw_text("UP/DN SELECT  ENTER PLAY",8,111,1,accent);
             draw_text("ESC: HOME",8,124,1,muted);
@@ -1775,12 +1775,12 @@ void render_home() {
     const auto bg=rgb565(15,20,25);
     const auto panel_bg=rgb565(26,35,50);
     const auto panel_alt=rgb565(42,53,72);
-    const auto ink=dark_theme?rgb565(255,255,255):rgb565(0,0,0);
+    const auto ink=rgb565(232,238,247);
     const auto muted=rgb565(139,155,180);
-    const auto accent=dark_theme?rgb565(255,255,255):rgb565(0,0,0);
+    const auto accent=rgb565(91,159,212);
     const auto cyan=rgb565(107,207,154);
     const auto purple=rgb565(115,115,115);
-    const auto selected=dark_theme?rgb565(64,64,64):rgb565(205,205,205);
+    const auto selected=rgb565(42,53,72);
     if(active_app>=0) { render_app(); return; }
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
 
