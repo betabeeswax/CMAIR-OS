@@ -116,6 +116,7 @@ bool wifi_event_handlers_registered=false;
 constexpr EventBits_t WIFI_GOT_IP_BIT=BIT0, WIFI_DISCONNECTED_BIT=BIT1;
 char wifi_networks[16][33]={}; int wifi_network_rssi[16]={}; int wifi_network_auth[16]={};
 int wifi_network_count=0, wifi_network_selected=0, wifi_network_scroll=0;
+std::uint8_t wifi_network_channel[16]={};
 int ble_device_count=0, ble_device_scroll=0;
 char ble_devices[12][32]={};
 char ble_rssi[12][8]={};
@@ -148,6 +149,7 @@ char store_names[128][64] = {}; char store_status[128][20] = {}; char store_ids[
 int store_count=0, store_selected=0, store_scroll=0;
 bool store_loading=false;
 bool ota_running=false;
+bool ui_dirty=true; // Declared before HTTP callbacks that request a redraw.
 char ota_message[48]="PRESS ENTER TO CHECK FOR UPDATES";
 volatile int ota_http_status=0;
 volatile bool ota_http_connected=false;
@@ -193,7 +195,6 @@ int food_x = 12, food_y = 4, game_score = 0;
 std::int64_t game_tick_us = 0;
 bool game_over = false;
 bool dark_theme = true;
-bool ui_dirty=true;
 bool boot_button_was_pressed = false;
 constexpr int kAppsPerPage = 4;
 constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT","STOPWATCH","OS UPDATER","WI-FI TESTER","MUSIC PLAYER"};
@@ -825,12 +826,14 @@ bool scan_wifi_networks() {
         std::snprintf(wifi_networks[wifi_network_count],sizeof(wifi_networks[0]),"%.32s",reinterpret_cast<const char*>(records[i].ssid));
         wifi_network_rssi[wifi_network_count]=records[i].rssi;
         wifi_network_auth[wifi_network_count]=(int)records[i].authmode;
+        wifi_network_channel[wifi_network_count]=records[i].primary;
         ++wifi_network_count;
     }
     for(int i=0;i<wifi_network_count;i++)for(int j=i+1;j<wifi_network_count;j++)if(wifi_network_rssi[j]>wifi_network_rssi[i]){
         char name[33];std::memcpy(name,wifi_networks[i],sizeof(name));std::memcpy(wifi_networks[i],wifi_networks[j],sizeof(name));std::memcpy(wifi_networks[j],name,sizeof(name));
         int r=wifi_network_rssi[i];wifi_network_rssi[i]=wifi_network_rssi[j];wifi_network_rssi[j]=r;
         int auth=wifi_network_auth[i];wifi_network_auth[i]=wifi_network_auth[j];wifi_network_auth[j]=auth;
+        std::uint8_t channel=wifi_network_channel[i];wifi_network_channel[i]=wifi_network_channel[j];wifi_network_channel[j]=channel;
     }
     std::snprintf(store_message,sizeof(store_message),wifi_network_count?"FOUND %d NETWORKS":"NO WIFI NETWORKS FOUND",wifi_network_count);
     return wifi_network_count>0;
@@ -1586,7 +1589,14 @@ void render_app() {
             const char* note_title=std::strrchr(note_filename,'/');
             draw_text(note_title?note_title+1:note_filename,8,25,1,accent);
             render_note_page(8,40,6,ink);
-            draw_text("TYPE EDIT  UP/DOWN SCROLL",8,112,1,muted);
+            int cursor_line=0,cursor_col=0;
+            for(int i=0;i<note_length;i++){
+                if(note_buffer[i]=='\n'){++cursor_line;cursor_col=0;}
+                else if(++cursor_col==35){++cursor_line;cursor_col=0;}
+            }
+            if(cursor_line>=note_scroll&&cursor_line<note_scroll+6)
+                draw_text("_",8+cursor_col*6,40+(cursor_line-note_scroll)*12,1,accent);
+            draw_text("EDITING - AUTO SAVED",8,112,1,muted);
             draw_text("FN+ENTER SAVE & EXIT  BKSP DEL",8,124,1,muted);
         }
         break;
@@ -1607,10 +1617,11 @@ void render_app() {
             draw_text("M MODE  ENTER RESCAN  ESC BACK",8,124,1,muted);
         } else if(wifi_setup_step==1||wifi_setup_step==2||wifi_setup_step==3||wifi_setup_step==4){
             if(wifi_setup_step==3){
-                draw_text("CHOOSE WIFI NETWORK",8,28,1,accent);
-                for(int i=0;i<5;i++){int ix=wifi_network_scroll+i;if(ix>=wifi_network_count)break;char row[40];std::snprintf(row,sizeof(row),"%c %.20s %ddB",ix==wifi_network_selected?'>':' ',wifi_networks[ix],wifi_network_rssi[ix]);draw_text(row,8,43+i*12,1,ix==wifi_network_selected?accent:ink);}
-                if(wifi_network_count==0)draw_text("NO NETWORKS - PRESS R",8,60,1,ink);
-                draw_text(store_message,8,101,1,muted);
+                draw_text("CHOOSE WIFI NETWORK",8,26,1,accent);
+                draw_text("2.4G ONLY - 5G NOT SUPPORTED",8,36,1,muted);
+                for(int i=0;i<5;i++){int ix=wifi_network_scroll+i;if(ix>=wifi_network_count)break;char row[40];std::snprintf(row,sizeof(row),"%c %.10s %ddB CH%02u 2.4G",ix==wifi_network_selected?'>':' ',wifi_networks[ix],wifi_network_rssi[ix],(unsigned)wifi_network_channel[ix]);draw_text(row,8,49+i*12,1,ix==wifi_network_selected?accent:ink);}
+                if(wifi_network_count==0)draw_text("NO 2.4G NETWORKS - PRESS R",8,66,1,ink);
+                draw_text(store_message,8,110,1,muted);
                 draw_text("UP/DN ENTER/RIGHT SELECT",8,114,1,muted);draw_text("M MANUAL  R RESCAN  ESC BACK",8,126,1,muted);
             } else {
                 const bool entering_ssid=(wifi_setup_step==1);
@@ -2149,11 +2160,11 @@ void poll_keyboard() {
                 else if(is_back(key))active_app=-1;
             } else {
                 if(is_back(key)||(key==KEY_ENTER&&fn_lock)){save_note();note_editing=false;refresh_notes();notes_action=0;}
-                else if(is_up(key)){note_scroll=std::max(0,note_scroll-1);}
-                else if(is_down(key)){note_scroll=std::min(std::max(0,note_visual_line_count()-6),note_scroll+1);}
-                else if(key==KEY_BACKSPACE||key==KEY_DELETE){if(note_length>0){--note_length;note_buffer[note_length]=0;save_note();}}
-                else if(key==KEY_ENTER&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]='\n';note_buffer[note_length]=0;note_scroll=std::max(0,note_visual_line_count()-6);save_note();}
-                else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;note_scroll=std::max(0,note_visual_line_count()-6);save_note();}
+                else if(is_up(key)){note_scroll=std::max(0,note_scroll-1);ui_dirty=true;}
+                else if(is_down(key)){note_scroll=std::min(std::max(0,note_visual_line_count()-6),note_scroll+1);ui_dirty=true;}
+                else if(key==KEY_BACKSPACE||key==KEY_DELETE){if(note_length>0){--note_length;note_buffer[note_length]=0;save_note();ui_dirty=true;}}
+                else if(key==KEY_ENTER&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]='\n';note_buffer[note_length]=0;note_scroll=std::max(0,note_visual_line_count()-6);save_note();ui_dirty=true;}
+                else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;note_scroll=std::max(0,note_visual_line_count()-6);save_note();ui_dirty=true;}
             }
         } else if(active_app==2){
             if(is_back(key))active_app=-1;
