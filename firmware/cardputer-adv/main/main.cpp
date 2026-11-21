@@ -353,28 +353,25 @@ void fill_round_rect(int x,int y,int w,int h,int radius,std::uint16_t color) {
     }
 }
 void draw_mcaI_logo_splash() {
-    // Match the supplied 240x135 MCAI-OS boot artwork, leaving a clear
-    // green strip at the bottom for the startup instruction.
-    const auto green=rgb565(220,220,220), black=rgb565(0,0,0);
-    const auto white=rgb565(254,254,254), grey=rgb565(115,115,115);
-    const auto frame=rgb565(120,120,120), navy=rgb565(0,0,0);
-    std::fill(std::begin(framebuffer),std::end(framebuffer),green);
+    // Boot screen uses the same dark logo palette as every other screen.
+    const auto bg=rgb565(8,11,18);
+    const auto card=rgb565(25,29,39);
+    const auto white=rgb565(239,241,247);
+    const auto blue=rgb565(35,103,220);
+    const auto muted=rgb565(125,135,153);
+    std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
     const char keys[]="MCAI";
     for(int i=0;i<4;i++) {
         const int x=1+i*59;
-        fill_round_rect(x+2,3,57,48,8,black);
-        fill_round_rect(x,0,57,47,8,black);
-        fill_round_rect(x+2,2,53,42,7,white);
+        fill_round_rect(x,3,57,45,7,card);
         char letter[2]={keys[i],0};
-        draw_text(letter,x+15,10,4,black);
+        draw_text(letter,x+15,10,4,white);
+        fill_rect(x+5,44,47,2,blue);
     }
-    fill_rect(63,53,114,61,black);
-    fill_rect(65,55,110,57,frame);
-    fill_rect(67,57,106,53,grey);
-    fill_rect(67,57,106,11,navy);
-    fill_rect(67,69,106,41,grey);
-    draw_text("OS",83,69,6,black);
-    draw_text("STARTING MCAI-OS",72,120,1,black);
+    fill_round_rect(63,53,114,61,5,card);
+    fill_rect(67,57,106,11,blue);
+    draw_text("OS",83,69,6,white);
+    draw_text("STARTING MCAI-OS",72,120,1,muted);
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
 }
 
@@ -1146,7 +1143,7 @@ void refresh_store() {
     if(store_loading)return;
     store_loading=true;store_count=0;store_selected=0;store_scroll=0;catalogue_loaded=false;
     std::snprintf(store_message,sizeof(store_message),"LOADING APP CATALOGUE");ui_dirty=true;
-    if(xTaskCreate(refresh_store_task,"store-refresh",4096,nullptr,2,nullptr)!=pdPASS){
+    if(xTaskCreate(refresh_store_task,"store-refresh",16384,nullptr,2,nullptr)!=pdPASS){
         store_loading=false;std::snprintf(store_message,sizeof(store_message),"STORE TASK FAILED");ui_dirty=true;
     }
 }
@@ -1419,6 +1416,14 @@ bool music_name_is_mp3(const char* name) {
     for(int i=0;i<4;i++)ext[i]=(char)std::tolower((unsigned char)name[n-4+i]);
     return std::strcmp(ext,".mp3")==0;
 }
+bool music_name_is_wav(const char* name) {
+    if(!name)return false;
+    const size_t n=std::strlen(name);
+    if(n<4)return false;
+    char ext[5]={};
+    for(int i=0;i<4;i++)ext[i]=(char)std::tolower((unsigned char)name[n-4+i]);
+    return std::strcmp(ext,".wav")==0;
+}
 void refresh_music_files() {
     music_count=0;music_selected=0;music_scroll=0;
     if(!sd_ready){std::snprintf(store_message,sizeof(store_message),"INSERT SD CARD");return;}
@@ -1427,9 +1432,7 @@ void refresh_music_files() {
     if(!d){std::snprintf(store_message,sizeof(store_message),"CANNOT OPEN MUSIC FOLDER");return;}
     struct dirent* e;
     while((e=readdir(d))&&music_count<16){
-        size_t n=std::strlen(e->d_name);if(n<4)continue;
-        const char* ext=e->d_name+n-4;
-        if(std::strcmp(ext,".wav")&&std::strcmp(ext,".WAV")&&!music_name_is_mp3(e->d_name))continue;
+        if(!music_name_is_wav(e->d_name)&&!music_name_is_mp3(e->d_name))continue;
         std::snprintf(music_files[music_count++],64,"%.63s",e->d_name);
     }
     closedir(d);
@@ -1525,7 +1528,7 @@ void start_music_playback() {
     if(!audio_ready){std::snprintf(store_message,sizeof(store_message),"AUDIO NOT READY");return;}
     if(music_selected<0||music_selected>=music_count)return;
     music_stop_requested=false;music_playing=true;
-    if(xTaskCreate(music_play_task,"music-player",8192,nullptr,4,nullptr)!=pdPASS){music_playing=false;std::snprintf(store_message,sizeof(store_message),"MUSIC TASK FAILED");}
+    if(xTaskCreate(music_play_task,"music-player",12288,nullptr,4,nullptr)!=pdPASS){music_playing=false;std::snprintf(store_message,sizeof(store_message),"MUSIC TASK FAILED");}
     ui_dirty=true;
 }
 void open_selected_file() {
@@ -1699,11 +1702,11 @@ void render_app() {
             draw_text("SETTINGS",8,25,1,accent);
             draw_text(wifi_connected?"WI-FI CONNECTED":(wifi_connecting?"WI-FI CONNECTING":"WI-FI OFFLINE"),8,39,1,wifi_connected?accent:(wifi_connecting?accent:muted));
             if(wifi_connected)draw_text(wifi_ip_text,8,49,1,accent);
-            const char* rows[]={"BRIGHTNESS","AIR BLUE THEME","WI-FI NETWORKS","BLUETOOTH DEVICES","SOUND"};
+            const char* rows[]={"BRIGHTNESS","AIR THEME","WI-FI NETWORKS","BLUETOOTH","SOUND"};
             for(int i=0;i<5;i++){
                 char item[40];
                 if(i==0)std::snprintf(item,sizeof(item),"BRIGHTNESS  %s",setting_brightness==0?"LOW":setting_brightness==1?"MEDIUM":"HIGH");
-                else if(i==1)std::snprintf(item,sizeof(item),"AIR THEME   FIXED");
+                else if(i==1)std::snprintf(item,sizeof(item),"AIR THEME    FIXED");
                 else if(i==4)std::snprintf(item,sizeof(item),"SOUND       %s",sound_enabled?"ON":"OFF");
                 else std::snprintf(item,sizeof(item),"%s",rows[i]);
                 fill_rect(6,59+i*11,228,10,i==settings_selection?rgb565(26,35,50):bg);
@@ -1745,6 +1748,7 @@ void render_app() {
             fill_round_rect(8,42+i*13,224,12,2,ix==music_selected?card:bg);
             draw_text(music_files[ix],14,44+i*13,1,ix==music_selected?accent:ink);}
         if(music_count==0)draw_text("ADD MP3/WAV TO MCAI-OS/MUSIC",8,65,1,muted);
+        draw_text(store_message,8,98,1,muted);
         draw_text(music_playing?"PLAYING - ENTER TO STOP":"ENTER PLAY / STOP",8,111,1,music_playing?accent:muted);
         draw_text("UP/DN SELECT  R RESCAN  BKSP BACK",8,124,1,muted);break;
     case 13: {
