@@ -1965,7 +1965,7 @@ void poll_keyboard() {
         // Detect Escape by the decoded apostrophe as well as matrix position.
         // This keeps Escape working if the raw keyboard matrix index differs.
         if(!fn_lock&&(ch=='\''||ch=='"')){key=KEY_ESC;ch=0;}
-        else if(fn_lock&&(row==2&&col==12||ch=='\''||ch=='"')){ch='\'';key=0;}
+        else if(fn_lock&&((row==2&&col==12)||ch=='\''||ch=='"')){ch='\'';key=0;}
         if(fn_lock){
             if(row==0&&col>=1&&col<=12){ch=0;std::snprintf(last_key_label,sizeof(last_key_label),"F%d",col);}
             else if(row==0&&col==13){key=KEY_BACKSPACE;ch=0;}
