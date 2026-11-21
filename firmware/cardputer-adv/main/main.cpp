@@ -995,17 +995,56 @@ void start_ota_update() {
     }
 }
 
+bool load_store_from_local_apps() {
+    store_count=0;store_selected=0;store_scroll=0;
+    if(!sd_ready)return false;
+    mkdir("/sdcard/MCAI-OS",0775);mkdir("/sdcard/MCAI-OS/apps",0775);
+    DIR* dir=opendir("/sdcard/MCAI-OS/apps");if(!dir)return false;
+    struct dirent* entry;
+    while((entry=readdir(dir))!=nullptr&&store_count<128){
+        const size_t len=std::strlen(entry->d_name);
+        if(len<8||std::strcmp(entry->d_name+len-8,".airapps")!=0)continue;
+        char path[160];std::snprintf(path,sizeof(path),"/sdcard/MCAI-OS/apps/%.63s",entry->d_name);
+        FILE* f=std::fopen(path,"r");if(!f)continue;
+        char data[4096]={};const size_t bytes=std::fread(data,1,sizeof(data)-1,f);std::fclose(f);
+        if(!bytes)continue;
+        cJSON* root=cJSON_Parse(data);if(!root)continue;
+        cJSON* fmt=cJSON_GetObjectItemCaseSensitive(root,"format");
+        cJSON* id=cJSON_GetObjectItemCaseSensitive(root,"id");
+        cJSON* name=cJSON_GetObjectItemCaseSensitive(root,"name");
+        cJSON* target=cJSON_GetObjectItemCaseSensitive(root,"target");
+        const bool valid=cJSON_IsString(fmt)&&std::strcmp(fmt->valuestring,"mcai-app-v1")==0&&
+            cJSON_IsString(id)&&cJSON_IsString(name)&&cJSON_IsString(target)&&
+            std::strcmp(target->valuestring,"cardputer-adv")==0;
+        if(valid){
+            bool duplicate=false;for(int i=0;i<store_count;i++)if(std::strcmp(store_ids[i],id->valuestring)==0)duplicate=true;
+            if(!duplicate){
+                std::snprintf(store_ids[store_count],64,"%s",id->valuestring);
+                std::snprintf(store_names[store_count],64,"%s",name->valuestring);
+                std::snprintf(store_status[store_count],20,"available");
+                store_urls[store_count][0]=0;store_hashes[store_count][0]=0;store_sizes[store_count]=0;
+                ++store_count;
+            }
+        }
+        cJSON_Delete(root);
+    }
+    closedir(dir);
+    catalogue_loaded=store_count>0;
+    return catalogue_loaded;
+}
+
 bool load_store_catalogue() {
     store_count=0;store_selected=0;store_scroll=0;catalogue_loaded=false;catalogue_length=0;catalogue_buffer[0]=0;
     for(int wait=0;wifi_connecting&&wait<120;wait++)vTaskDelay(pdMS_TO_TICKS(250));
-    if(wifi_connecting){std::snprintf(store_message,sizeof(store_message),"WIFI STILL CONNECTING");return false;}
-    if(!connect_wifi_from_sd())return false;
+    if(wifi_connecting){if(load_store_from_local_apps()){std::snprintf(store_message,sizeof(store_message),"LOCAL APPS: %d",store_count);return true;}std::snprintf(store_message,sizeof(store_message),"WIFI STILL CONNECTING");return false;}
+    if(!connect_wifi_from_sd()){if(load_store_from_local_apps()){std::snprintf(store_message,sizeof(store_message),"LOCAL APPS: %d",store_count);return true;}return false;}
     // HTTPS certificate validation needs a real clock. Wi-Fi can have an IP
     // while NTP is still syncing, so wait before contacting GitHub.
     start_time_sync();
     for(int wait=0;wait<60&&std::time(nullptr)<1577836800;wait++)
         vTaskDelay(pdMS_TO_TICKS(500));
     if(std::time(nullptr)<1577836800){
+        if(load_store_from_local_apps()){std::snprintf(store_message,sizeof(store_message),"LOCAL APPS: %d",store_count);return true;}
         std::snprintf(store_message,sizeof(store_message),"TIME NOT SYNCED - RETRY");return false;
     }
     esp_http_client_config_t cfg={};
@@ -1046,6 +1085,7 @@ bool load_store_catalogue() {
             }
         }
         if(!loaded_from_cache){
+            if(load_store_from_local_apps()){std::snprintf(store_message,sizeof(store_message),"LOCAL APPS: %d",store_count);return true;}
             if(result!=ESP_OK)std::snprintf(store_message,sizeof(store_message),"HTTPS FAIL: %.20s",esp_err_to_name(result));
             else if(status!=200)std::snprintf(store_message,sizeof(store_message),"GITHUB HTTP %d",status);
             else std::snprintf(store_message,sizeof(store_message),"EMPTY CATALOGUE RESPONSE");
