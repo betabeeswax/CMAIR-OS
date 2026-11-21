@@ -2038,19 +2038,18 @@ void poll_keyboard() {
         if(row==2&&col==1){
             if(fn_lock)caps_lock=!caps_lock;
             else shift_held=true;
+            fn_lock=false; // FN is one-shot; don't leave it latched.
             std::snprintf(last_key_label,sizeof(last_key_label),caps_lock?"CAPS":"SHIFT");
             ++keypress_count;continue;
         }
+        // Consume FN on the next key press if its key-up event was missed.
+        const bool fn_active=fn_lock;
+        fn_lock=false;
         std::uint8_t key=0;
         char ch=decode_key(row,col,shift_held!=caps_lock);
-        // Swap the physical apostrophe and Escape functions: Escape normally,
-        // apostrophe with Fn. Del is Delete normally and Backspace with Fn.
-        // The four physical arrow keys navigate normally; Fn types their legends.
-        // Detect Escape by the decoded apostrophe as well as matrix position.
-        // This keeps Escape working if the raw keyboard matrix index differs.
-        if(!fn_lock&&(ch=='\''||ch=='"')){key=KEY_ESC;ch=0;}
-        else if(fn_lock&&((row==2&&col==12)||ch=='\''||ch=='"')){ch='\'';key=0;}
-        if(fn_lock){
+        // Restore Escape to its physical top-left key and keep apostrophe normal.
+        if(row==0&&col==0){key=KEY_ESC;ch=0;}
+        if(fn_active){
             if(row==0&&col>=1&&col<=12){ch=0;std::snprintf(last_key_label,sizeof(last_key_label),"F%d",col);}
             else if(row==0&&col==13){key=KEY_BACKSPACE;ch=0;}
             else if(row==2&&col==11){ch=';';key=0;}
@@ -2083,7 +2082,7 @@ void poll_keyboard() {
         else if(key==KEY_ALT)std::snprintf(last_key_label,sizeof(last_key_label),"ALT");
         else if(key==KEY_OPT)std::snprintf(last_key_label,sizeof(last_key_label),"OPT");
         else if(key==KEY_DELETE)std::snprintf(last_key_label,sizeof(last_key_label),"DELETE");
-        else if(fn_lock&&row==0&&col>=1&&col<=12)std::snprintf(last_key_label,sizeof(last_key_label),"F%d",col);
+        else if(fn_active&&row==0&&col>=1&&col<=12)std::snprintf(last_key_label,sizeof(last_key_label),"F%d",col);
         else if(ch)std::snprintf(last_key_label,sizeof(last_key_label),"%c",ch);
         else std::snprintf(last_key_label,sizeof(last_key_label),"FN KEY");
         last_char=ch?ch:(key==KEY_UP?'^':key==KEY_DOWN?'v':key==KEY_LEFT?'<':key==KEY_RIGHT?'>':'?');
