@@ -79,7 +79,7 @@ constexpr std::uint8_t KEY_ESC=1, KEY_FN=2, KEY_CAPS=3, KEY_UP=4, KEY_DOWN=5,
                         KEY_TAB=10, KEY_CTRL=11, KEY_ALT=12, KEY_OPT=13, KEY_DELETE=14;
 bool caps_lock = false;
 bool shift_held = false;
-bool fn_lock = false;
+bool fn_lock = false, fn_pending = false;
 bool is_up(std::uint8_t k){return k==KEY_UP;}
 bool is_down(std::uint8_t k){return k==KEY_DOWN;}
 bool is_left(std::uint8_t k){return k==KEY_LEFT;}
@@ -130,7 +130,7 @@ bool calc_error=false;
 char calc_error_text[24]={};
 int file_scroll = 0;
 char note_buffer[512] = {};
-int note_length = 0, note_scroll = 0;
+int note_length = 0, note_scroll = 0, note_cursor = 0;
 char note_files[16][40] = {};
 std::uint8_t note_folder[16] = {};
 int note_count=0, note_selected=0, notes_action=1; // 1 = Add Note button, 0 = note list
@@ -490,7 +490,7 @@ void open_note(int index) {
     note_buffer[note_length]=0;
     std::fclose(f);
     std::snprintf(note_filename,sizeof(note_filename),"%s",path);
-    note_editing=true;note_scroll=0;
+    note_editing=true;note_scroll=0;note_cursor=note_length;
     std::snprintf(store_message,sizeof(store_message),"NOTE OPENED");
 }
 void create_note() {
@@ -505,7 +505,7 @@ void create_note() {
     }
     if(number>=1000){std::snprintf(store_message,sizeof(store_message),"NOTE LIMIT REACHED");return;}
     std::snprintf(note_filename,sizeof(note_filename),"/sdcard/MCAI-OS/notes/%s",name);
-    note_buffer[0]=0;note_length=0;note_scroll=0;note_editing=true;
+    note_buffer[0]=0;note_length=0;note_scroll=0;note_cursor=0;note_editing=true;
     if(save_note()){refresh_notes();for(int i=0;i<note_count;i++)if(std::strcmp(note_files[i],name)==0){note_selected=i;break;}}
     else note_editing=false;
 }
@@ -1112,7 +1112,7 @@ void refresh_store() {
 }
 bool package_path(char* out,size_t cap,const char* id) {
     if(!id||!id[0]||std::strstr(id,"..")||std::strchr(id,'/'))return false;
-    std::snprintf(out,cap,"/sdcard/MCAI-OS/apps/%s.json",id);return true;
+    std::snprintf(out,cap,"/sdcard/MCAI-OS/apps/%s.airapps",id);return true;
 }
 int store_builtin_index(const char* id) {
     if(std::strcmp(id,"file-manager")==0)return 0;
@@ -1228,7 +1228,7 @@ void refresh_installed_packages() {
     struct dirent* e;
     while((e=readdir(d))!=nullptr&&installed_package_count<16){
         const size_t n=std::strlen(e->d_name);
-        if(n<6||std::strcmp(e->d_name+n-5,".json")!=0)continue;
+        if(n<9||std::strcmp(e->d_name+n-8,".airapps")!=0)continue;
         char path[160];std::snprintf(path,sizeof(path),"/sdcard/MCAI-OS/apps/%.63s",e->d_name);
         FILE* f=std::fopen(path,"r");if(!f)continue;
         char data[4096]={};const size_t bytes=std::fread(data,1,sizeof(data)-1,f);std::fclose(f);if(!bytes)continue;
@@ -1596,6 +1596,11 @@ void render_app() {
                 if(note_buffer[i]=='\n'){++cursor_line;cursor_col=0;}
                 else if(++cursor_col==35){++cursor_line;cursor_col=0;}
             }
+            cursor_line=0;cursor_col=0;
+            for(int i=0;i<note_cursor&&i<note_length;i++){
+                if(note_buffer[i]=='\n'){++cursor_line;cursor_col=0;}
+                else if(++cursor_col==35){++cursor_line;cursor_col=0;}
+            }
             if(cursor_line>=note_scroll&&cursor_line<note_scroll+6)
                 draw_text("_",8+cursor_col*6,40+(cursor_line-note_scroll)*12,1,accent);
             draw_text("EDITING - AUTO SAVED",8,112,1,muted);
@@ -1790,7 +1795,7 @@ void render_home() {
     draw_text(wifi_connected?"WIFI":"OFF",198,6,1,wifi_connected?accent:muted);
     if(caps_lock)draw_text("C",224,6,1,accent);
     if(fn_lock)draw_text("F",233,6,1,accent);
-    fill_rect(0,25,kWidth,1,border);
+    fill_rect(0,25,kWidth,1,rgb565(48,54,68));
 
     if(organizer_mode) {
         draw_text("EDIT HOME",9,31,1,accent);
@@ -2034,17 +2039,17 @@ void poll_keyboard() {
             if(row==2&&col==1)shift_held=false;
             continue;
         }
-        if(row==2&&col==0){fn_lock=true;std::snprintf(last_key_label,sizeof(last_key_label),"FN");++keypress_count;continue;}
+        if(row==2&&col==0){fn_lock=true;fn_pending=true;std::snprintf(last_key_label,sizeof(last_key_label),"FN");++keypress_count;continue;}
         if(row==2&&col==1){
-            if(fn_lock)caps_lock=!caps_lock;
+            if(fn_lock||fn_pending)caps_lock=!caps_lock;
             else shift_held=true;
-            fn_lock=false; // FN is one-shot; don't leave it latched.
+            fn_lock=false;fn_pending=false; // Shift/Caps consumes pending FN.
             std::snprintf(last_key_label,sizeof(last_key_label),caps_lock?"CAPS":"SHIFT");
             ++keypress_count;continue;
         }
         // Consume FN on the next key press if its key-up event was missed.
-        const bool fn_active=fn_lock;
-        fn_lock=false;
+        const bool fn_active=fn_pending||fn_lock;
+        fn_pending=false;fn_lock=false;
         std::uint8_t key=0;
         char ch=decode_key(row,col,shift_held!=caps_lock);
         // Restore Escape to its physical top-left key and keep apostrophe normal.
@@ -2158,12 +2163,15 @@ void poll_keyboard() {
                 }
                 else if(is_back(key))active_app=-1;
             } else {
-                if(is_back(key)||(key==KEY_ENTER&&fn_lock)){save_note();note_editing=false;refresh_notes();notes_action=0;}
+                if(is_back(key)||(key==KEY_ENTER&&fn_active)){save_note();note_editing=false;refresh_notes();notes_action=0;}
+                else if(is_left(key)){if(note_cursor>0)--note_cursor;ui_dirty=true;}
+                else if(is_right(key)){if(note_cursor<note_length)++note_cursor;ui_dirty=true;}
                 else if(is_up(key)){note_scroll=std::max(0,note_scroll-1);ui_dirty=true;}
                 else if(is_down(key)){note_scroll=std::min(std::max(0,note_visual_line_count()-6),note_scroll+1);ui_dirty=true;}
-                else if(key==KEY_BACKSPACE||key==KEY_DELETE){if(note_length>0){--note_length;note_buffer[note_length]=0;save_note();ui_dirty=true;}}
-                else if(key==KEY_ENTER&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]='\n';note_buffer[note_length]=0;note_scroll=std::max(0,note_visual_line_count()-6);save_note();ui_dirty=true;}
-                else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){note_buffer[note_length++]=ch;note_buffer[note_length]=0;note_scroll=std::max(0,note_visual_line_count()-6);save_note();ui_dirty=true;}
+                else if(key==KEY_BACKSPACE){if(note_cursor>0){std::memmove(note_buffer+note_cursor-1,note_buffer+note_cursor,(size_t)(note_length-note_cursor)+1);--note_cursor;--note_length;save_note();ui_dirty=true;}}
+                else if(key==KEY_DELETE){if(note_cursor<note_length){std::memmove(note_buffer+note_cursor,note_buffer+note_cursor+1,(size_t)(note_length-note_cursor));--note_length;save_note();ui_dirty=true;}}
+                else if(key==KEY_ENTER&&note_length<(int)sizeof(note_buffer)-2){std::memmove(note_buffer+note_cursor+1,note_buffer+note_cursor,(size_t)(note_length-note_cursor)+1);note_buffer[note_cursor++]='\n';++note_length;note_scroll=std::max(0,note_visual_line_count()-6);save_note();ui_dirty=true;}
+                else if(ch>=32&&ch<127&&note_length<(int)sizeof(note_buffer)-2){std::memmove(note_buffer+note_cursor+1,note_buffer+note_cursor,(size_t)(note_length-note_cursor)+1);note_buffer[note_cursor++]=ch;++note_length;note_scroll=std::max(0,note_visual_line_count()-6);save_note();ui_dirty=true;}
             }
         } else if(active_app==2){
             if(is_back(key))active_app=-1;
