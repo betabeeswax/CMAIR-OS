@@ -968,11 +968,16 @@ bool load_store_catalogue() {
         std::snprintf(store_message,sizeof(store_message),"TIME NOT SYNCED - RETRY");return false;
     }
     esp_http_client_config_t cfg={};
-    cfg.url="https://raw.githubusercontent.com/betabeeswax/MCAI-OS-APPS/main/catalogue.json";
+    const char* catalogue_urls[]={
+        "https://cdn.jsdelivr.net/gh/betabeeswax/MCAI-OS-APPS@main/catalogue.json",
+        "https://raw.githubusercontent.com/betabeeswax/MCAI-OS-APPS/main/catalogue.json",
+        "https://github.com/betabeeswax/MCAI-OS-APPS/raw/refs/heads/main/catalogue.json"
+    };
     cfg.event_handler=catalogue_http_event;cfg.timeout_ms=45000;cfg.buffer_size=2048;cfg.buffer_size_tx=1024;
-    cfg.crt_bundle_attach=esp_crt_bundle_attach;cfg.keep_alive_enable=false;cfg.disable_auto_redirect=false;cfg.max_redirection_count=5;
+    cfg.crt_bundle_attach=esp_crt_bundle_attach;cfg.keep_alive_enable=false;cfg.disable_auto_redirect=false;cfg.max_redirection_count=8;
     esp_err_t result=ESP_FAIL;int status=0;
     for(int attempt=0;attempt<3;attempt++){
+        cfg.url=catalogue_urls[attempt];
         catalogue_length=0;catalogue_buffer[0]=0;
         esp_http_client_handle_t client=esp_http_client_init(&cfg);
         if(!client){result=ESP_FAIL;status=0;}
@@ -982,13 +987,30 @@ bool load_store_catalogue() {
             esp_http_client_cleanup(client);
         }
         if(result==ESP_OK&&status==200&&catalogue_length>0)break;
-        ESP_LOGW(kTag,"Store HTTPS attempt %d failed: %s HTTP %d",attempt+1,esp_err_to_name(result),status);
+        ESP_LOGW(kTag,"Store HTTPS source %d failed: %s HTTP %d",attempt+1,esp_err_to_name(result),status);
         configure_wifi_fallback_dns();
         if(attempt<2)vTaskDelay(pdMS_TO_TICKS(1200));
     }
-    if(result!=ESP_OK){std::snprintf(store_message,sizeof(store_message),"HTTPS FAIL: %.20s",esp_err_to_name(result));return false;}
-    if(status!=200){std::snprintf(store_message,sizeof(store_message),"GITHUB HTTP %d",status);return false;}
-    if(catalogue_length==0){std::snprintf(store_message,sizeof(store_message),"EMPTY CATALOGUE RESPONSE");return false;}
+    bool loaded_from_cache=false;
+    if(result!=ESP_OK||status!=200||catalogue_length==0){
+        // Keep the last known catalogue on the SD card so the Store can still
+        // open and show installed/available entries when the network is down.
+        if(sd_ready){
+            FILE* cache=std::fopen("/sdcard/MCAI-OS/store-catalogue.json","r");
+            if(cache){
+                catalogue_length=std::fread(catalogue_buffer,1,sizeof(catalogue_buffer)-1,cache);
+                std::fclose(cache);
+                catalogue_buffer[catalogue_length]=0;
+                loaded_from_cache=catalogue_length>0;
+            }
+        }
+        if(!loaded_from_cache){
+            if(result!=ESP_OK)std::snprintf(store_message,sizeof(store_message),"HTTPS FAIL: %.20s",esp_err_to_name(result));
+            else if(status!=200)std::snprintf(store_message,sizeof(store_message),"GITHUB HTTP %d",status);
+            else std::snprintf(store_message,sizeof(store_message),"EMPTY CATALOGUE RESPONSE");
+            return false;
+        }
+    }
     if(catalogue_length>=sizeof(catalogue_buffer)-1){std::snprintf(store_message,sizeof(store_message),"CATALOGUE TOO LARGE");return false;}
     cJSON* root=cJSON_Parse(catalogue_buffer);
     cJSON* apps=root?cJSON_GetObjectItemCaseSensitive(root,"apps"):nullptr;
@@ -1022,7 +1044,18 @@ bool load_store_catalogue() {
         ++store_count;
     }
     cJSON_Delete(root);catalogue_loaded=true;
-    std::snprintf(store_message,sizeof(store_message),"%d APPS LOADED",store_count);
+    if(!loaded_from_cache&&sd_ready){
+        mkdir("/sdcard/MCAI-OS",0775);
+        FILE* cache=std::fopen("/sdcard/MCAI-OS/store-catalogue.json.tmp","w");
+        if(cache){
+            const size_t written=std::fwrite(catalogue_buffer,1,catalogue_length,cache);
+            const bool saved=std::fclose(cache)==0&&written==catalogue_length;
+            if(saved)rename("/sdcard/MCAI-OS/store-catalogue.json.tmp","/sdcard/MCAI-OS/store-catalogue.json");
+            else unlink("/sdcard/MCAI-OS/store-catalogue.json.tmp");
+        }
+    }
+    if(loaded_from_cache)std::snprintf(store_message,sizeof(store_message),"SD CACHE: %d APPS",store_count);
+    else std::snprintf(store_message,sizeof(store_message),"%d APPS LOADED",store_count);
     return true;
 }
 void refresh_store_task(void*) {
@@ -1935,13 +1968,15 @@ void poll_keyboard() {
     std::uint8_t count=0;if(keyboard_read(0x03,&count)!=ESP_OK)return;count&=0x0F;
     while(count--){
         std::uint8_t event=0;if(keyboard_read(0x04,&event)!=ESP_OK||event==0)break;
-        // TCA8418 event format: high bit SET means key DOWN;
-        // high bit CLEAR means key UP (release).
-        const bool pressed=(event&0x80)!=0;
+        // TCA8418 event format: 0x01..0x50 is key DOWN;
+        // bit 7 set means key UP (release). Do not invert this:
+        // treating releases as presses makes taps appear to be ignored.
+        const bool pressed=(event&0x80)==0;
         const int raw=(event&0x7F);
-        if(raw<=0||raw>70)continue; // Cardputer ADV is a 7-row x 8-column matrix.
+        if(raw<=0)continue;
         const int raw_index=raw-1, raw_row=raw_index/10, raw_col=raw_index%10;
-        // TCA8418 raw FIFO positions are remapped exactly as M5Stack's ADV driver.
+        if(raw_row>=7||raw_col>=8)continue; // Cardputer ADV matrix is 7 x 8.
+        // TCA8418 raw FIFO positions remapped to the Cardputer ADV 4 x 14 layout.
         const int row=(raw_col+4)%4, col=raw_row*2+(raw_col>3?1:0);
         if(row<0||row>=4||col<0||col>=14)continue;
         ui_dirty=true;
