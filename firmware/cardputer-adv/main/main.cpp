@@ -194,7 +194,7 @@ int snake_x[48] = {}, snake_y[48] = {}, snake_len = 3, snake_dx = 1, snake_dy = 
 int food_x = 12, food_y = 4, game_score = 0;
 std::int64_t game_tick_us = 0;
 bool game_over = false;
-bool dark_theme = true;
+bool dark_theme = true; // Kept only to read older settings files; the AIR palette is fixed.
 bool boot_button_was_pressed = false;
 constexpr int kAppsPerPage = 4;
 constexpr const char* kApps[] = {"FILE MANAGER","NOTES","CALCULATOR","SETTINGS","SYSTEM INFO","APP STORE","CLOCK","TIMER","KEYBOARD TEST","STORAGE","DIAGNOSTICS","GAMES","ABOUT","STOPWATCH","OS UPDATER","WI-FI TESTER","MUSIC PLAYER"};
@@ -1537,22 +1537,26 @@ void render_note_page(int x,int y,int visible,std::uint16_t color) {
     }
 }
 void render_app() {
-    const auto white=dark_theme?rgb565(255,255,255):rgb565(0,0,0);
-    const auto muted=dark_theme?rgb565(170,170,170):rgb565(75,75,75);
-    const auto accent=dark_theme?rgb565(255,255,255):rgb565(0,0,0);
-    const auto bg=dark_theme?rgb565(0,0,0):rgb565(255,255,255);
+    const auto white=rgb565(232,238,247); // --text
+    const auto muted=rgb565(139,155,180); // --muted
+    const auto accent=rgb565(91,159,212); // --accent
+    const auto bg=rgb565(15,20,25); // --bg
+    const auto card=rgb565(26,35,50); // --card
+    const auto border=rgb565(42,53,72); // --border
+    const auto syn=rgb565(107,207,154); // --syn
+    const auto ant=rgb565(232,138,138); // --ant
     const auto ink=white;
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
-    fill_rect(0,0,kWidth,22,rgb565(0,0,0));
+    fill_rect(0,0,kWidth,22,card);
     fill_round_rect(7,4,14,14,4,accent);
-    draw_text("M",11,8,1,rgb565(0,0,0));
+    draw_text("M",11,8,1,bg);
     if(active_app==17)draw_text(package_title,28,7,1,ink);
     else if(active_app>=0&&active_app<kAppCount)draw_text(kApps[active_app],28,7,1,ink);
     else draw_text("MCAI APP",28,7,1,ink);
     if(caps_lock)draw_text("CAP",174,7,1,accent);
     if(shift_held)draw_text("SHF",194,7,1,accent);
     if(fn_lock)draw_text("FN",218,7,1,accent);
-    fill_rect(0,22,kWidth,1,dark_theme?rgb565(90,90,90):rgb565(130,130,130));
+    fill_rect(0,22,kWidth,1,border);
     char line[64];
     switch(active_app) {
     case 0:
@@ -1565,7 +1569,7 @@ void render_app() {
         } else {
             const char* tail=std::strlen(current_dir)>36?current_dir+std::strlen(current_dir)-36:current_dir;
             draw_text(tail,8,25,1,accent);
-            for(int i=0;i<5;i++){int ix=file_scroll+i;if(ix>=file_count)break;const bool selected=ix==file_selected;if(selected)fill_round_rect(5,39+i*14,230,13,2,dark_theme?rgb565(65,65,65):rgb565(205,205,205));std::snprintf(line,sizeof(line),"%c %.32s",file_is_dir[ix]?'>':' ',file_names[ix]);draw_text(line,8,42+i*14,1,selected?(dark_theme?rgb565(255,255,255):rgb565(0,0,0)):ink);}
+            for(int i=0;i<5;i++){int ix=file_scroll+i;if(ix>=file_count)break;const bool selected=ix==file_selected;if(selected)fill_round_rect(5,39+i*14,230,13,2,card);std::snprintf(line,sizeof(line),"%c %.32s",file_is_dir[ix]?'>':' ',file_names[ix]);draw_text(line,8,42+i*14,1,selected?(white):ink);}
             draw_text("UP/DN MOVE  ENTER OPEN",8,112,1,muted);draw_text("BKSP BACK",8,124,1,muted);
         }
         break;
@@ -1578,7 +1582,7 @@ void render_app() {
             for(int i=0;i<5;i++){
                 const int ix=note_scroll+i;
                 if(ix>=note_count)break;
-                fill_round_rect(8,47+i*12,224,11,2,ix==note_selected&&notes_action==0?(dark_theme?rgb565(64,64,64):rgb565(205,205,205)):bg);
+                fill_round_rect(8,47+i*12,224,11,2,ix==note_selected&&notes_action==0?(card):bg);
                 draw_text(note_files[ix],14,49+i*12,1,ix==note_selected&&notes_action==0?accent:ink);
             }
             if(note_count==0)draw_text("NO SAVED NOTES YET",14,63,1,muted);
@@ -1636,14 +1640,14 @@ void render_app() {
             draw_text("SETTINGS",8,25,1,accent);
             draw_text(wifi_connected?"WI-FI CONNECTED":(wifi_connecting?"WI-FI CONNECTING":"WI-FI OFFLINE"),8,39,1,wifi_connected?accent:(wifi_connecting?accent:muted));
             if(wifi_connected)draw_text(wifi_ip_text,8,49,1,accent);
-            const char* rows[]={"BRIGHTNESS","THEME","WI-FI NETWORKS","BLUETOOTH DEVICES","SOUND"};
+            const char* rows[]={"BRIGHTNESS","AIR BLUE THEME","WI-FI NETWORKS","BLUETOOTH DEVICES","SOUND"};
             for(int i=0;i<5;i++){
                 char item[40];
                 if(i==0)std::snprintf(item,sizeof(item),"BRIGHTNESS  %s",setting_brightness==0?"LOW":setting_brightness==1?"MEDIUM":"HIGH");
-                else if(i==1)std::snprintf(item,sizeof(item),"THEME       %s",dark_theme?"DARK":"LIGHT");
+                else if(i==1)std::snprintf(item,sizeof(item),"AIR THEME   FIXED");
                 else if(i==4)std::snprintf(item,sizeof(item),"SOUND       %s",sound_enabled?"ON":"OFF");
                 else std::snprintf(item,sizeof(item),"%s",rows[i]);
-                fill_rect(6,59+i*11,228,10,i==settings_selection?rgb565(70,70,70):bg);
+                fill_rect(6,59+i*11,228,10,i==settings_selection?rgb565(26,35,50):bg);
                 draw_text(item,12,60+i*11,1,i==settings_selection?accent:ink);
             }
             draw_text("UP/DN SELECT  LEFT/RIGHT CHANGE",8,117,1,muted);
@@ -1679,7 +1683,7 @@ void render_app() {
     case 16:
         draw_text("MUSIC / MP3 + WAV",8,27,1,accent);
         for(int i=0;i<5;i++){int ix=music_scroll+i;if(ix>=music_count)break;
-            fill_round_rect(8,42+i*13,224,12,2,ix==music_selected?(dark_theme?rgb565(64,64,64):rgb565(205,205,205)):bg);
+            fill_round_rect(8,42+i*13,224,12,2,ix==music_selected?(rgb565(42,53,72)):bg);
             draw_text(music_files[ix],14,44+i*13,1,ix==music_selected?accent:ink);}
         if(music_count==0)draw_text("ADD MP3/WAV TO MCAI-OS/MUSIC",8,65,1,muted);
         draw_text(music_playing?"PLAYING - ENTER TO STOP":"ENTER PLAY / STOP",8,111,1,music_playing?accent:muted);
@@ -1734,7 +1738,7 @@ void render_app() {
             for(int i=0;i<3;i++){
                 const int y=35+i*25;const bool sel=i==game_menu_selected;
                 fill_round_rect(7,y,226,22,4,sel?(dark_theme?rgb565(65,65,65):rgb565(205,205,205)):rgb565(25,25,25));
-                draw_text(games[i],14,y+3,1,sel?(dark_theme?rgb565(255,255,255):rgb565(0,0,0)):ink);
+                draw_text(games[i],14,y+3,1,sel?(rgb565(232,238,247)):ink);
                 draw_text(details[i],112,y+3,1,sel?(dark_theme?rgb565(255,255,255):rgb565(0,0,0)):muted);
             }
             draw_text("UP/DN SELECT  ENTER PLAY",8,111,1,accent);
@@ -1763,34 +1767,34 @@ void render_app() {
     default:
         draw_text("MCAI-OS FOR CARDPUTER ADV",8,37,1,ink);draw_text("VERSION 0.2.0",8,57,1,accent);draw_text("BUILT-IN APP SUITE",8,77,1,muted);break;
     }
-    fill_rect(0,122,kWidth,1,rgb565(80,80,80)); // Keep app-specific footer text clear; ESC still returns home.
+    fill_rect(0,122,kWidth,1,border); // Keep app-specific footer text clear; ESC still returns home.
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel,0,0,kWidth,kHeight,framebuffer));
 }
 
 void render_home() {
-    const auto bg=dark_theme?rgb565(0,0,0):rgb565(255,255,255);
-    const auto panel_bg=dark_theme?rgb565(24,24,24):rgb565(245,245,245);
-    const auto panel_alt=dark_theme?rgb565(48,48,48):rgb565(220,220,220);
+    const auto bg=rgb565(15,20,25);
+    const auto panel_bg=rgb565(26,35,50);
+    const auto panel_alt=rgb565(42,53,72);
     const auto ink=dark_theme?rgb565(255,255,255):rgb565(0,0,0);
-    const auto muted=dark_theme?rgb565(170,170,170):rgb565(75,75,75);
+    const auto muted=rgb565(139,155,180);
     const auto accent=dark_theme?rgb565(255,255,255):rgb565(0,0,0);
-    const auto cyan=dark_theme?rgb565(190,190,190):rgb565(70,70,70);
+    const auto cyan=rgb565(107,207,154);
     const auto purple=rgb565(115,115,115);
     const auto selected=dark_theme?rgb565(64,64,64):rgb565(205,205,205);
     if(active_app>=0) { render_app(); return; }
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
 
     // MCAI-OS v2 visual system: compact status bar, app tiles and clear focus.
-    fill_rect(0,0,kWidth,25,rgb565(0,0,0));
+    fill_rect(0,0,kWidth,25,rgb565(26,35,50));
     fill_round_rect(7,5,15,15,4,accent);
-    draw_text("M",11,9,1,rgb565(0,0,0));
+    draw_text("M",11,9,1,rgb565(15,20,25));
     draw_text("MCAI",28,6,1,ink);
     draw_text("OS",54,6,1,accent);
     draw_text(sd_ready?"SD":"NO SD",164,6,1,sd_ready?accent:muted);
     draw_text(wifi_connected?"WIFI":"OFF",198,6,1,wifi_connected?cyan:muted);
     if(caps_lock)draw_text("C",224,6,1,accent);
     if(fn_lock)draw_text("F",233,6,1,purple);
-    fill_rect(0,25,kWidth,1,dark_theme?rgb565(90,90,90):rgb565(130,130,130));
+    fill_rect(0,25,kWidth,1,rgb565(42,53,72));
 
     if(organizer_mode) {
         draw_text("EDIT HOME",9,31,1,accent);
@@ -2217,10 +2221,10 @@ void poll_keyboard() {
             } else if(is_up(key)||is_down(key)){settings_selection=(settings_selection+(is_up(key)?4:1))%5;}
             else if(is_left(key)||is_right(key)){
                 if(settings_selection==0){setting_brightness=std::max(0,std::min(2,setting_brightness+(is_right(key)?1:-1)));apply_brightness();save_settings();}
-                else if(settings_selection==1){dark_theme=!dark_theme;save_settings();}
+                else if(settings_selection==1){/* AIR palette is fixed. */}
                 else if(settings_selection==4){sound_enabled=!sound_enabled;save_settings();}
             } else if(key==KEY_ENTER){
-                if(settings_selection==1){dark_theme=!dark_theme;save_settings();}
+                if(settings_selection==1){/* AIR palette is fixed. */}
                 else if(settings_selection==2){load_wifi_settings();wifi_setup_step=3;scan_wifi_networks();}
                 else if(settings_selection==3){bluetooth_screen=true;if(!start_ble_scan())ui_dirty=true;}
                 else if(settings_selection==4){sound_enabled=!sound_enabled;save_settings();}
