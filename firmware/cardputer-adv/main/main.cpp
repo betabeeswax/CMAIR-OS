@@ -27,6 +27,7 @@
 #include "esp_https_ota.h"
 #include "esp_ota_ops.h"
 #include "esp_crt_bundle.h"
+#include "lwip/ip4_addr.h"
 #include "nvs_flash.h"
 #include "cJSON.h"
 #include "mbedtls/sha256.h"
@@ -669,6 +670,17 @@ void stop_ble_scan() {
     }
     ble_scan_active=false;
 }
+void configure_wifi_fallback_dns() {
+    if(!wifi_sta_netif)return;
+    esp_netif_dns_info_t dns{};
+    dns.ip.type=ESP_IPADDR_TYPE_V4;
+    IP4_ADDR(&dns.ip.u_addr.ip4,1,1,1,1);
+    esp_err_t e=esp_netif_set_dns_info(wifi_sta_netif,ESP_NETIF_DNS_MAIN,&dns);
+    if(e!=ESP_OK)ESP_LOGW(kTag,"Set primary DNS: %s",esp_err_to_name(e));
+    IP4_ADDR(&dns.ip.u_addr.ip4,8,8,8,8);
+    e=esp_netif_set_dns_info(wifi_sta_netif,ESP_NETIF_DNS_BACKUP,&dns);
+    if(e!=ESP_OK)ESP_LOGW(kTag,"Set backup DNS: %s",esp_err_to_name(e));
+}
 void start_time_sync() {
     setenv("TZ","EST5EDT,M3.2.0/2,M11.1.0/2",1);
     tzset();
@@ -714,7 +726,7 @@ bool init_wifi_driver() {
             const esp_err_t restart=esp_wifi_start();
             if(restart!=ESP_OK&&restart!=ESP_ERR_INVALID_STATE)return wifi_init_error("RESTART",restart);
             wifi_radio_stopped_for_ble=false;
-            esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+            esp_wifi_set_ps(WIFI_PS_NONE);
         }
         return true;
     }
@@ -762,7 +774,7 @@ bool init_wifi_driver() {
     if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("MODE",e);
     e=esp_wifi_start();
     if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)return wifi_init_error("START",e);
-    e=esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+    e=esp_wifi_set_ps(WIFI_PS_NONE);
     if(e!=ESP_OK&&e!=ESP_ERR_INVALID_STATE)ESP_LOGW(kTag,"Wi-Fi power save setting: %s",esp_err_to_name(e));
     wifi_driver_ready=true;
     log_wifi_memory("after init");
@@ -830,6 +842,7 @@ bool connect_wifi_credentials(const char* ssid,const char* password) {
         if(bits&WIFI_GOT_IP_BIT) {
             wifi_connected=true;
             wifi_started=true;
+            configure_wifi_fallback_dns();
             std::snprintf(store_message,sizeof(store_message),"WIFI VERIFIED");
             start_time_sync();
             return true;
@@ -866,7 +879,7 @@ bool connect_wifi_from_sd() {
         esp_netif_ip_info_t ip{};
         if(wifi_sta_netif&&esp_netif_get_ip_info(wifi_sta_netif,&ip)==ESP_OK&&ip.ip.addr!=0){
             std::snprintf(wifi_ip_text,sizeof(wifi_ip_text),IPSTR,IP2STR(&ip.ip));
-            wifi_connected=true;wifi_started=true;start_time_sync();return true;
+            wifi_connected=true;wifi_started=true;configure_wifi_fallback_dns();start_time_sync();return true;
         }
         wifi_ap_record_t current{};
         if(esp_wifi_sta_get_ap_info(&current)==ESP_OK){
@@ -897,7 +910,7 @@ void ota_update_task(void*) {
         ota_running=false;ui_dirty=true;vTaskDelete(nullptr);return;
     }
     start_time_sync();
-    for(int wait=0;wait<20&&std::time(nullptr)<1577836800;wait++)vTaskDelay(pdMS_TO_TICKS(500));
+    for(int wait=0;wait<60&&std::time(nullptr)<1577836800;wait++)vTaskDelay(pdMS_TO_TICKS(500));
     if(std::time(nullptr)<1577836800){
         std::snprintf(ota_message,sizeof(ota_message),"TIME NOT SYNCED - RETRY");
         ota_running=false;ui_dirty=true;vTaskDelete(nullptr);return;
@@ -910,7 +923,14 @@ void ota_update_task(void*) {
     http_cfg.timeout_ms=90000;http_cfg.keep_alive_enable=false;http_cfg.disable_auto_redirect=false;http_cfg.max_redirection_count=8;http_cfg.buffer_size=2048;http_cfg.buffer_size_tx=1024;
     esp_https_ota_config_t ota_cfg={};
     ota_cfg.http_config=&http_cfg;
-    const esp_err_t err=esp_https_ota(&ota_cfg);
+    esp_err_t err=ESP_FAIL;
+    for(int attempt=0;attempt<3;attempt++){
+        err=esp_https_ota(&ota_cfg);
+        if(err==ESP_OK)break;
+        ESP_LOGW(kTag,"OTA attempt %d failed: %s",attempt+1,esp_err_to_name(err));
+        configure_wifi_fallback_dns();
+        if(attempt<2)vTaskDelay(pdMS_TO_TICKS(1500));
+    }
     if(err==ESP_OK) {
         std::snprintf(ota_message,sizeof(ota_message),"UPDATE READY - RESTARTING");
         ui_dirty=true;
@@ -927,7 +947,7 @@ void start_ota_update() {
     ota_running=true;
     std::snprintf(ota_message,sizeof(ota_message),"STARTING UPDATE...");
     ui_dirty=true;
-    if(xTaskCreate(ota_update_task,"mcai_ota",6144,nullptr,4,nullptr)!=pdPASS) {
+    if(xTaskCreate(ota_update_task,"mcai_ota",4096,nullptr,3,nullptr)!=pdPASS) {
         ota_running=false;
         std::snprintf(ota_message,sizeof(ota_message),"UPDATE TASK FAILED");
         ui_dirty=true;
@@ -942,7 +962,7 @@ bool load_store_catalogue() {
     // HTTPS certificate validation needs a real clock. Wi-Fi can have an IP
     // while NTP is still syncing, so wait before contacting GitHub.
     start_time_sync();
-    for(int wait=0;wait<24&&std::time(nullptr)<1577836800;wait++)
+    for(int wait=0;wait<60&&std::time(nullptr)<1577836800;wait++)
         vTaskDelay(pdMS_TO_TICKS(500));
     if(std::time(nullptr)<1577836800){
         std::snprintf(store_message,sizeof(store_message),"TIME NOT SYNCED - RETRY");return false;
@@ -951,10 +971,21 @@ bool load_store_catalogue() {
     cfg.url="https://raw.githubusercontent.com/betabeeswax/MCAI-OS-APPS/main/catalogue.json";
     cfg.event_handler=catalogue_http_event;cfg.timeout_ms=45000;cfg.buffer_size=2048;cfg.buffer_size_tx=1024;
     cfg.crt_bundle_attach=esp_crt_bundle_attach;cfg.keep_alive_enable=false;cfg.disable_auto_redirect=false;cfg.max_redirection_count=5;
-    esp_http_client_handle_t client=esp_http_client_init(&cfg);
-    if(!client){std::snprintf(store_message,sizeof(store_message),"HTTP INIT FAILED");return false;}
-    esp_err_t result=esp_http_client_perform(client);
-    int status=esp_http_client_get_status_code(client);esp_http_client_cleanup(client);
+    esp_err_t result=ESP_FAIL;int status=0;
+    for(int attempt=0;attempt<3;attempt++){
+        catalogue_length=0;catalogue_buffer[0]=0;
+        esp_http_client_handle_t client=esp_http_client_init(&cfg);
+        if(!client){result=ESP_FAIL;status=0;}
+        else {
+            result=esp_http_client_perform(client);
+            status=esp_http_client_get_status_code(client);
+            esp_http_client_cleanup(client);
+        }
+        if(result==ESP_OK&&status==200&&catalogue_length>0)break;
+        ESP_LOGW(kTag,"Store HTTPS attempt %d failed: %s HTTP %d",attempt+1,esp_err_to_name(result),status);
+        configure_wifi_fallback_dns();
+        if(attempt<2)vTaskDelay(pdMS_TO_TICKS(1200));
+    }
     if(result!=ESP_OK){std::snprintf(store_message,sizeof(store_message),"HTTPS FAIL: %.20s",esp_err_to_name(result));return false;}
     if(status!=200){std::snprintf(store_message,sizeof(store_message),"GITHUB HTTP %d",status);return false;}
     if(catalogue_length==0){std::snprintf(store_message,sizeof(store_message),"EMPTY CATALOGUE RESPONSE");return false;}
@@ -1001,7 +1032,7 @@ void refresh_store() {
     if(store_loading)return;
     store_loading=true;store_count=0;store_selected=0;store_scroll=0;catalogue_loaded=false;
     std::snprintf(store_message,sizeof(store_message),"LOADING APP CATALOGUE");ui_dirty=true;
-    if(xTaskCreate(refresh_store_task,"store-refresh",5120,nullptr,3,nullptr)!=pdPASS){
+    if(xTaskCreate(refresh_store_task,"store-refresh",4096,nullptr,2,nullptr)!=pdPASS){
         store_loading=false;std::snprintf(store_message,sizeof(store_message),"STORE TASK FAILED");ui_dirty=true;
     }
 }
@@ -1219,7 +1250,7 @@ void wifi_test_task(void*) {
     wifi_ap_record_t ap{};if(esp_wifi_sta_get_ap_info(&ap)==ESP_OK)wifi_test_rssi=ap.rssi;
     std::snprintf(wifi_test_ip,sizeof(wifi_test_ip),"%s",wifi_ip_text);
     start_time_sync();
-    for(int wait=0;wait<20&&std::time(nullptr)<1577836800;wait++)vTaskDelay(pdMS_TO_TICKS(500));
+    for(int wait=0;wait<60&&std::time(nullptr)<1577836800;wait++)vTaskDelay(pdMS_TO_TICKS(500));
     esp_err_t result=ESP_FAIL;int status=0;
     wifi_test_online=wifi_http_probe("https://connectivitycheck.gstatic.com/generate_204",status,result);
     wifi_test_http=status;
@@ -1931,7 +1962,10 @@ void poll_keyboard() {
         // Swap the physical apostrophe and Escape functions: Escape normally,
         // apostrophe with Fn. Del is Delete normally and Backspace with Fn.
         // The four physical arrow keys navigate normally; Fn types their legends.
-        if(row==2&&col==12){if(fn_lock){ch='\'';key=0;}else{key=KEY_ESC;ch=0;}}
+        // Detect Escape by the decoded apostrophe as well as matrix position.
+        // This keeps Escape working if the raw keyboard matrix index differs.
+        if(!fn_lock&&(ch=='\''||ch=='"')){key=KEY_ESC;ch=0;}
+        else if(fn_lock&&(row==2&&col==12||ch=='\''||ch=='"')){ch='\'';key=0;}
         if(fn_lock){
             if(row==0&&col>=1&&col<=12){ch=0;std::snprintf(last_key_label,sizeof(last_key_label),"F%d",col);}
             else if(row==0&&col==13){key=KEY_BACKSPACE;ch=0;}
