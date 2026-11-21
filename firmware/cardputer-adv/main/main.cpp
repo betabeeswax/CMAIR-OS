@@ -1537,14 +1537,12 @@ void render_note_page(int x,int y,int visible,std::uint16_t color) {
     }
 }
 void render_app() {
-    const auto white=rgb565(232,238,247); // --text
-    const auto muted=rgb565(139,155,180); // --muted
-    const auto accent=rgb565(91,159,212); // --accent
-    const auto bg=rgb565(15,20,25); // --bg
-    const auto card=rgb565(26,35,50); // --card
-    const auto border=rgb565(42,53,72); // --border
-    const auto syn=rgb565(107,207,154); // --syn
-    const auto ant=rgb565(232,138,138); // --ant
+    const auto white=rgb565(239,241,247); // logo white
+    const auto muted=rgb565(125,135,153); // muted blue-grey
+    const auto accent=rgb565(35,103,220); // single MCAI logo blue
+    const auto bg=rgb565(8,11,18); // deep logo navy
+    const auto card=rgb565(25,29,39); // charcoal logo tiles
+    const auto border=rgb565(48,54,68); // subtle charcoal border
     const auto ink=white;
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
     fill_rect(0,0,kWidth,22,card);
@@ -1578,7 +1576,7 @@ void render_app() {
             draw_text("MY NOTES",8,25,1,accent);
             fill_round_rect(151,22,81,17,4,notes_action==1?accent:muted);
             draw_text("+ ADD NOTE",158,27,1,notes_action==1?bg:ink);
-            fill_rect(8,43,224,1,rgb565(80,80,80));
+            fill_rect(8,43,224,1,border);
             for(int i=0;i<5;i++){
                 const int ix=note_scroll+i;
                 if(ix>=note_count)break;
@@ -1606,7 +1604,7 @@ void render_app() {
         break;
     case 2:
         draw_text("CALCULATOR",8,27,1,accent);draw_text(calc_buffer,8,49,2,ink);
-        if(calc_error)draw_text(calc_error_text,8,70,1,rgb565(190,190,190));
+        if(calc_error)draw_text(calc_error_text,8,70,1,muted);
         draw_text("P +   M -   X *   D /",8,87,1,muted);draw_text("DIGITS / BRACKETS / DECIMAL",8,101,1,muted);draw_text("ENTER = RESULT  BKSP = DEL",8,116,1,muted);break;
     case 3:
         if(bluetooth_screen){
@@ -1683,7 +1681,7 @@ void render_app() {
     case 16:
         draw_text("MUSIC / MP3 + WAV",8,27,1,accent);
         for(int i=0;i<5;i++){int ix=music_scroll+i;if(ix>=music_count)break;
-            fill_round_rect(8,42+i*13,224,12,2,ix==music_selected?(rgb565(42,53,72)):bg);
+            fill_round_rect(8,42+i*13,224,12,2,ix==music_selected?card:bg);
             draw_text(music_files[ix],14,44+i*13,1,ix==music_selected?accent:ink);}
         if(music_count==0)draw_text("ADD MP3/WAV TO MCAI-OS/MUSIC",8,65,1,muted);
         draw_text(music_playing?"PLAYING - ENTER TO STOP":"ENTER PLAY / STOP",8,111,1,music_playing?accent:muted);
@@ -1719,7 +1717,7 @@ void render_app() {
         std::snprintf(line,sizeof(line),"UPTIME %lu SEC",(unsigned long)(esp_timer_get_time()/1000000));draw_text(line,8,84,1,ink);break;
     case 14:
         draw_text("SYSTEM UPDATER",8,28,1,accent);
-        fill_round_rect(8,42,224,37,5,rgb565(32,32,32));
+        fill_round_rect(8,42,224,37,5,card);
         draw_text(ota_running?"UPDATING MCAI-OS":"CHECK FOR OS UPDATE",17,51,1,ink);
         draw_text(ota_message,8,91,1,muted);
         draw_text(ota_running?"PLEASE KEEP DEVICE POWERED":"ENTER: CHECK / INSTALL",8,111,1,accent);
@@ -1737,8 +1735,8 @@ void render_app() {
             const char* details[]={"ARCADE CLASSIC","GUESS 1 TO 9","ADD TWO NUMBERS"};
             for(int i=0;i<3;i++){
                 const int y=35+i*25;const bool sel=i==game_menu_selected;
-                fill_round_rect(7,y,226,22,4,sel?rgb565(26,35,50):rgb565(15,20,25));
-                draw_text(games[i],14,y+3,1,sel?(rgb565(232,238,247)):ink);
+                fill_round_rect(7,y,226,22,4,sel?card:bg);
+                draw_text(games[i],14,y+3,1,sel?accent:ink);
                 draw_text(details[i],112,y+3,1,sel?rgb565(232,238,247):muted);
             }
             draw_text("UP/DN SELECT  ENTER PLAY",8,111,1,accent);
@@ -1747,7 +1745,7 @@ void render_app() {
             draw_text("SNAKE",8,25,1,accent);
             if(game_over)draw_text("GAME OVER - ENTER",100,25,1,accent);
             for(int i=0;i<snake_len;i++)fill_rect(16+snake_x[i]*9,38+snake_y[i]*8,7,6,accent);
-            fill_rect(16+food_x*9,38+food_y*8,7,6,rgb565(180,180,180));
+            fill_rect(16+food_x*9,38+food_y*8,7,6,accent);
             std::snprintf(line,sizeof(line),"SCORE %d",game_score);draw_text(line,8,116,1,ink);
             draw_text("ARROWS MOVE  ESC GAMES",8,128,1,muted);
         } else if(game_mode==1){
@@ -1772,29 +1770,27 @@ void render_app() {
 }
 
 void render_home() {
-    const auto bg=rgb565(15,20,25);
-    const auto panel_bg=rgb565(26,35,50);
-    const auto panel_alt=rgb565(42,53,72);
-    const auto ink=rgb565(232,238,247);
-    const auto muted=rgb565(139,155,180);
-    const auto accent=rgb565(91,159,212);
-    const auto cyan=rgb565(107,207,154);
-    const auto purple=rgb565(115,115,115);
-    const auto selected=rgb565(42,53,72);
+    const auto bg=rgb565(8,11,18);
+    const auto panel_bg=rgb565(25,29,39);
+    const auto panel_alt=rgb565(25,29,39);
+    const auto ink=rgb565(239,241,247);
+    const auto muted=rgb565(125,135,153);
+    const auto accent=rgb565(35,103,220);
+    const auto selected=rgb565(31,39,57);
     if(active_app>=0) { render_app(); return; }
     std::fill(std::begin(framebuffer),std::end(framebuffer),bg);
 
     // MCAI-OS v2 visual system: compact status bar, app tiles and clear focus.
-    fill_rect(0,0,kWidth,25,rgb565(26,35,50));
+    fill_rect(0,0,kWidth,25,panel_bg);
     fill_round_rect(7,5,15,15,4,accent);
-    draw_text("M",11,9,1,rgb565(15,20,25));
+    draw_text("M",11,9,1,bg);
     draw_text("MCAI",28,6,1,ink);
     draw_text("OS",54,6,1,accent);
     draw_text(sd_ready?"SD":"NO SD",164,6,1,sd_ready?accent:muted);
-    draw_text(wifi_connected?"WIFI":"OFF",198,6,1,wifi_connected?cyan:muted);
+    draw_text(wifi_connected?"WIFI":"OFF",198,6,1,wifi_connected?accent:muted);
     if(caps_lock)draw_text("C",224,6,1,accent);
-    if(fn_lock)draw_text("F",233,6,1,purple);
-    fill_rect(0,25,kWidth,1,rgb565(42,53,72));
+    if(fn_lock)draw_text("F",233,6,1,accent);
+    fill_rect(0,25,kWidth,1,border);
 
     if(organizer_mode) {
         draw_text("EDIT HOME",9,31,1,accent);
@@ -1837,10 +1833,10 @@ void render_home() {
             const bool active=pos==selected_app;
             const auto tile_bg=active?selected:((tile%2)?panel_alt:panel_bg);
             fill_round_rect(x,y,110,31,5,tile_bg);
-            fill_round_rect(x+5,y+6,19,19,5,active?accent:(tile==1?cyan:tile==2?purple:muted));
+            fill_round_rect(x+5,y+6,19,19,5,accent);
             const char* label=launcher_item_name(item);
             char icon[2]={label&&label[0]?label[0]:'?',0};
-            draw_text(icon,x+11,y+12,1,rgb565(0,0,0));
+            draw_text(icon,x+11,y+12,1,bg);
             char short_name[15]={};
             if(label)std::snprintf(short_name,sizeof(short_name),"%.13s",label);
             draw_text(short_name,x+30,y+8,1,active?accent:ink);
